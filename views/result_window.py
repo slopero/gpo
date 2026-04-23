@@ -12,7 +12,9 @@ class ResultWindow:
         on_action_one=None,
         on_action_two=None,
         record_id=None,
+        controller=None,
     ):
+        self.controller = controller
         self.parent = parent
         self.data = data
         self.id = record_id # ID записи в базе
@@ -53,12 +55,34 @@ class ResultWindow:
 
     def _handle_action_one(self):
         report_generator.main()
-
     def _handle_action_two(self):
-        if self.on_action_two:
-            self.on_action_two(self.data)
+        """Поиск аналогов"""
+        if not self.controller:
+            messagebox.showwarning("Ошибка", "Нет доступа к базе данных")
             return
-        messagebox.showinfo("Функция", "Кнопка 2 пока не реализована")
+        
+        if not self.id:
+            messagebox.showwarning("Ошибка", "ID записи не найден")
+            return
+        
+        try:
+            self.window.config(cursor="watch")
+            self.window.update()
+            
+            analogs = self.controller.find_similar_vehicles(self.id)
+            
+            self.window.config(cursor="")
+            
+            if not analogs:
+                messagebox.showinfo("Поиск аналогов", "Аналоги не найдены")
+                return
+            
+            from views.analogs_window import AnalogsWindow
+            AnalogsWindow(self.window, analogs)
+            
+        except Exception as e:
+            self.window.config(cursor="")
+            messagebox.showerror("Ошибка", f"Ошибка при поиске аналогов:\n{str(e)}")
 
     def _go_back(self):
         self.window.destroy()
