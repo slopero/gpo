@@ -12,7 +12,8 @@ class AnalogsWindow:
         
         self.window = tk.Toplevel(parent)
         self.window.title("Найденные аналоги")
-        self.window.geometry("900x550")
+        self.window.geometry("1000x600")
+        self._center_window()
         
         title = tk.Label(
             self.window, 
@@ -30,15 +31,33 @@ class AnalogsWindow:
         btn_frame.pack(pady=(0, 12))
         tk.Button(btn_frame, text="Закрыть", command=self.window.destroy, width=15).pack()
     
+    def _center_window(self):
+        """Центрирует окно на экране"""
+        self.window.update_idletasks()
+        width = self.window.winfo_width()
+        height = self.window.winfo_height()
+        x = (self.window.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.window.winfo_screenheight() // 2) - (height // 2)
+        self.window.geometry(f'{width}x{height}+{x}+{y}')
+    
     def _create_table(self, parent):
         if not self.analogs:
             label = tk.Label(parent, text="Аналоги не найдены", font=("Segoe UI", 12))
             label.pack(expand=True)
             return
         
-        columns = ["Название_машины", "Год", "Цена", "Мощность", 
-                   "Объем_двигателя", "Тип_двигателя", "Коробка_передач", 
-                   "Пробег", "Руль", "Регион"]
+        all_keys = set()
+        for analog in self.analogs:
+            all_keys.update(analog.keys())
+        
+        priority_columns = ["Название_машины", "Год", "Цена", "Мощность", 
+                           "Объем_двигателя", "Тип_двигателя", "Коробка_передач", 
+                           "Пробег", "Руль", "Регион", "Дата_объявления"]
+        
+        columns = [col for col in priority_columns if col in all_keys]
+        
+        if not columns:
+            columns = list(all_keys)
         
         headers = {
             "Название_машины": "Марка/Модель",
@@ -51,27 +70,37 @@ class AnalogsWindow:
             "Пробег": "Пробег (км)",
             "Руль": "Руль",
             "Регион": "Регион",
+            "Дата_объявления": "Дата объявления",
         }
         
-        tree = ttk.Treeview(parent, columns=columns, show="headings", height=15)
-        tree.pack(side="left", fill="both", expand=True)
+        tree_frame = ttk.Frame(parent)
+        tree_frame.pack(fill="both", expand=True)
         
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
-        scrollbar.pack(side="right", fill="y")
-        tree.configure(yscrollcommand=scrollbar.set)
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=15)
+        
+        scrollbar_y = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        scrollbar_x = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
+        
+        tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar_y.grid(row=0, column=1, sticky="ns")
+        scrollbar_x.grid(row=1, column=0, sticky="ew")
+        
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
         
         for col in columns:
             display_name = headers.get(col, col)
             tree.heading(col, text=display_name)
             
             if col == "Название_машины":
-                width = 180
+                width = 200
             elif col == "Цена":
                 width = 120
             else:
                 width = 100
             
-            tree.column(col, width=width, anchor="w" if col != "Цена" else "e")
+            tree.column(col, width=width, anchor="w" if col not in ["Цена", "Год", "Мощность", "Пробег"] else "e")
         
         for analog in self.analogs:
             values = []
@@ -80,13 +109,17 @@ class AnalogsWindow:
                 
                 if col == "Цена" and value:
                     try:
-                        value = f"{int(value):,}".replace(",", " ")
+                        value = f"{int(float(value)):,}".replace(",", " ")
                     except:
                         pass
-                
                 elif col == "Пробег" and value:
                     try:
-                        value = f"{int(value):,}".replace(",", " ")
+                        value = f"{int(float(value)):,}".replace(",", " ")
+                    except:
+                        pass
+                elif col == "Мощность" and value:
+                    try:
+                        value = f"{int(float(value))}".replace(",", " ")
                     except:
                         pass
                 
