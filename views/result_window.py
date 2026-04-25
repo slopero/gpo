@@ -1,6 +1,7 @@
 import tkinter as tk
-from tkinter import messagebox
-from kiril import report_generator
+from tkinter import messagebox, ttk
+from kiril.report_generator import main as report_main
+
 
 class ResultWindow:
     def __init__(
@@ -17,16 +18,16 @@ class ResultWindow:
         self.controller = controller
         self.parent = parent
         self.data = data
-        self.id = record_id # ID записи в базе
+        self.id = record_id
         self.labels = labels
         self.on_back = on_back
-        self.on_action_one = on_action_one
-        self.on_action_two = on_action_two
 
         self.window = tk.Toplevel(parent)
         self.window.title("Поиск аналогов и анализ рынка")
         self.window.geometry("620x520")
         self.window.protocol("WM_DELETE_WINDOW", self._go_back)
+
+        self._center_window()
 
         title = tk.Label(self.window, text="Введенные данные", font=("Segoe UI", 14, "bold"))
         title.pack(pady=(12, 10))
@@ -53,10 +54,20 @@ class ResultWindow:
         tk.Button(button_row, text="Поиск аналогов", width=20, command=self._handle_action_two).pack(side="left", padx=6)
         tk.Button(button_row, text="Назад к форме", width=20, command=self._go_back).pack(side="left", padx=6)
 
+    def _center_window(self):
+        """Центрирует окно на экране"""
+        self.window.update_idletasks()
+        width = self.window.winfo_width()
+        height = self.window.winfo_height()
+        x = (self.window.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.window.winfo_screenheight() // 2) - (height // 2)
+        self.window.geometry(f'{width}x{height}+{x}+{y}')
+
     def _handle_action_one(self):
-        report_generator.main()
+        report_main()
+    
     def _handle_action_two(self):
-        """Поиск аналогов"""
+        """Поиск аналогов с выбором БД и прогресс-баром"""
         if not self.controller:
             messagebox.showwarning("Ошибка", "Нет доступа к базе данных")
             return
@@ -65,24 +76,54 @@ class ResultWindow:
             messagebox.showwarning("Ошибка", "ID записи не найден")
             return
         
-        try:
-            self.window.config(cursor="watch")
-            self.window.update()
-            
-            analogs = self.controller.find_similar_vehicles(self.id)
-            
-            self.window.config(cursor="")
-            
-            if not analogs:
-                messagebox.showinfo("Поиск аналогов", "Аналоги не найдены")
-                return
-            
-            from views.analogs_window import AnalogsWindow
-            AnalogsWindow(self.window, analogs)
-            
-        except Exception as e:
-            self.window.config(cursor="")
-            messagebox.showerror("Ошибка", f"Ошибка при поиске аналогов:\n{str(e)}")
+        progress_window = tk.Toplevel(self.window)
+        progress_window.title("Поиск аналогов")
+        progress_window.geometry("400x150")
+        progress_window.transient(self.window)
+        progress_window.grab_set()
+        
+        progress_window.update_idletasks()
+        x = (progress_window.winfo_screenwidth() // 2) - (400 // 2)
+        y = (progress_window.winfo_screenheight() // 2) - (150 // 2)
+        progress_window.geometry(f'400x150+{x}+{y}')
+        
+        tk.Label(progress_window, text="Поиск аналогов...", font=("Segoe UI", 12, "bold")).pack(pady=10)
+        
+        progress_var = tk.StringVar(value="Подготовка...")
+        tk.Label(progress_window, textvariable=progress_var).pack(pady=5)
+        
+        progress_bar = ttk.Progressbar(progress_window, mode='determinate', length=350)
+        progress_bar.pack(pady=10)
+        
+        def update_progress(message, value):
+            progress_var.set(message)
+            progress_bar['value'] = value
+            progress_window.update()
+        
+        def search_thread():
+            try:
+                analogs = self.controller.find_similar_vehicles(
+                    self.id, 
+                    progress_callback=update_progress
+                )
+                
+                progress_window.destroy()
+                
+                if not analogs:
+                    messagebox.showinfo("Поиск аналогов", "Аналоги не найдены")
+                    return
+                
+                from views.analogs_window import AnalogsWindow
+                AnalogsWindow(self.window, analogs)
+                
+            except Exception as e:
+                progress_window.destroy()
+                messagebox.showerror("Ошибка", f"Ошибка при поиске аналогов:\n{str(e)}")
+        
+        import threading
+        thread = threading.Thread(target=search_thread)
+        thread.daemon = True
+        thread.start()
 
     def _go_back(self):
         self.window.destroy()
