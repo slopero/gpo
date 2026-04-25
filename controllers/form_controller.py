@@ -95,3 +95,35 @@ class FormController:
         if not value:
             return None
         return float(value)
+    
+    def find_similar_vehicles(self, record_id: int, progress_callback=None) -> list:
+        """Поиск аналогов для записи с указанным ID"""
+        from db.external_db import ExternalDB
+        
+        if progress_callback:
+            progress_callback("Загрузка данных записи...", 10)
+        
+        record = self.params_model.get_record_by_id(record_id)
+        if not record:
+            return []
+        
+        if progress_callback:
+            progress_callback("Подключение к базе данных...", 30)
+        
+        external_db = ExternalDB(progress_callback=progress_callback)
+        
+        if external_db.data is None and external_db.conn is None:
+            if progress_callback:
+                progress_callback("Выберите файл базы данных...", 40)
+            if not external_db.select_database_interactive():
+                return []
+        
+        if progress_callback:
+            progress_callback("Поиск аналогов...", 60)
+        
+        results = external_db.find_similar(record)
+        
+        if progress_callback:
+            progress_callback(f"Готово! Найдено {len(results)} аналогов", 100)
+        
+        return results
