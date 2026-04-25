@@ -29,7 +29,7 @@ class MainWindow:
     def __init__(self, controller):
         self.controller = controller
         self.root = tk.Tk()
-        self.root.title("Форма для заполения данных")
+        self.root.title("Форма для заполнения данных")
         self.root.geometry("560x640")
 
         self.field_vars = {}
@@ -55,7 +55,7 @@ class MainWindow:
         var = tk.StringVar()
         tk.Label(self.root, text=f"{label_text}:").grid(row=row, column=0, padx=10, pady=6, sticky="w")
 
-        # Есть есть варианты для выбора
+        # Если есть варианты для выбора
         if options:
             widget = ttk.Combobox(self.root, textvariable=var, values=options, state="readonly", width=37)
             widget.grid(row=row, column=1, padx=10, pady=6)
@@ -78,7 +78,14 @@ class MainWindow:
 
         selected_id = self.controller.get_selected_record_id()
         self.root.withdraw()
-        ResultWindow(self.root, data, self.field_labels, self._restore_form, record_id=selected_id)
+        ResultWindow(
+            self.root, 
+            data, 
+            self.field_labels, 
+            self._restore_form, 
+            record_id=selected_id,
+            controller=self.controller
+        )
 
     def open_db_records(self):
         records = self.controller.get_saved_records()
@@ -105,6 +112,7 @@ class MainWindow:
             self.field_labels,
             self._restore_form,
             record_id=selected_id,
+            controller=self.controller
         )
 
     def _restore_form(self):
