@@ -68,6 +68,20 @@ class ReportGenerator:
         5: "май", 6: "июнь", 7: "июль", 8: "август",
         9: "сентябрь", 10: "октябрь", 11: "ноябрь", 12: "декабрь",
     }
+    MONTH_WORD_RE = {
+        1: r"январ(?:ь|я|е)?|january",
+        2: r"феврал(?:ь|я|е)?|february",
+        3: r"март(?:а|е)?|march",
+        4: r"апрел(?:ь|я|е)?|april",
+        5: r"ма(?:й|я|е)|may",
+        6: r"июн(?:ь|я|е)?|june",
+        7: r"июл(?:ь|я|е)?|july",
+        8: r"август(?:а|е)?|august",
+        9: r"сентябр(?:ь|я|е)?|september",
+        10: r"октябр(?:ь|я|е)?|october|octover",
+        11: r"ноябр(?:ь|я|е)?|november",
+        12: r"декабр(?:ь|я|е)?|december",
+    }
 
     # Поддерживает имена вида:
     # osn-01-2026.pdf, Osn-09-2014_2.pdf, osn-08-2019(3).pdf
@@ -146,18 +160,39 @@ class ReportGenerator:
     @staticmethod
     def _extract_year_month_from_text(text: str) -> Optional[tuple[int, int]]:
         low = (text or "").lower()
+        if not low:
+            return None
+
+        # First try to bind a month to the closest explicit year. This avoids
+        # taking a release year or a yearly/quarterly period as the month year.
+        for month, month_re in ReportGenerator.MONTH_WORD_RE.items():
+            month_to_year = re.search(
+                rf"(?<![a-zа-я])(?:{month_re})(?![a-zа-я])[^0-9]{{0,90}}(?P<year>20\d{{2}})",
+                low,
+                flags=re.IGNORECASE,
+            )
+            if month_to_year:
+                return int(month_to_year.group("year")), month
+
+            year_to_month = re.search(
+                rf"(?P<year>20\d{{2}})[^a-zа-я0-9]{{0,90}}(?<![a-zа-я])(?:{month_re})(?![a-zа-я])",
+                low,
+                flags=re.IGNORECASE,
+            )
+            if year_to_month:
+                return int(year_to_month.group("year")), month
+
         y_match = re.search(r"(20\d{2})", low)
         if not y_match:
             return None
         year = int(y_match.group(1))
 
-        month_map = {
-            "january": 1, "february": 2, "march": 3, "april": 4,
-            "may": 5, "june": 6, "july": 7, "august": 8,
-            "september": 9, "october": 10, "octover": 10, "november": 11, "december": 12,
-        }
-        for token, month in month_map.items():
-            if token in low:
+        for month, month_re in ReportGenerator.MONTH_WORD_RE.items():
+            if re.search(
+                rf"(?<![a-zа-я])(?:{month_re})(?![a-zа-я])",
+                low,
+                flags=re.IGNORECASE,
+            ):
                 return year, month
         return None
 
@@ -201,6 +236,151 @@ class ReportGenerator:
         return None
 
     @classmethod
+    def _is_aggregate_aeb_row(cls, row: dict) -> bool:
+        text = " ".join(str(row.get(k, "")) for k in ("pdf_name", "title", "period")).lower()
+        aggregate_patterns = [
+            r"\bq[1-4]\b",
+            r"\bq[1-4]\d{2}\b",
+            r"\bhy1\b",
+            r"\b1hy\b",
+            r"\bye\d{4}\b",
+            r"\bye\s+\d{4}\b",
+            r"\bannual\b",
+            r"\byear\b",
+            r"квартал",
+            r"полугод",
+            r"девять месяцев",
+            r"за\s+\d+[-\s]*(?:ти\s+)?месяц",
+            r"в\s+20\d{2}\s+году",
+        ]
+        return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in aggregate_patterns)
+
+    @classmethod
+    def _extract_monthly_sales_units_from_text(cls, text: str, year: int, month: int) -> Optional[int]:
+        if not text:
+            return None
+
+        month_re = cls.MONTH_WORD_RE.get(month)
+        if not month_re:
+            return None
+
+        normalized = cls._normalize_spaces(text)
+        month_pattern = rf"(?<![a-zа-я])(?:{month_re})(?![a-zа-я])"
+        direct_candidates: list[tuple[int, int, int]] = []
+
+        for month_match in re.finditer(month_pattern, normalized, flags=re.IGNORECASE):
+            before_month = normalized[max(0, month_match.start() - 14):month_match.start()]
+            if re.search(r"[-–—]\s*$", before_month):
+                continue
+
+            segment = normalized[month_match.start():month_match.start() + 320]
+            low_segment = segment.lower()
+            for match in re.finditer(
+                r"(?:составил[аио]?|составило|были\s+продан[ыо]?|продан[ыо]?|"
+                r"достиг(?:ли|ло)?)\s+(\d[\d\s,.]{2,20}\d)",
+                segment,
+                flags=re.IGNORECASE,
+            ):
+                nearby = segment[max(0, match.start(1) - 12):match.end(1) + 12].lower()
+                if re.search(r"\d{4}\s*/\s*\d{4}", nearby):
+                    continue
+                value = cls._extract_int_token(match.group(1))
+                if value is None or value == year or not (10_000 <= value <= 3_000_000):
+                    continue
+
+                prefix = low_segment[:match.start()]
+                score = 100 - len(prefix)
+                if str(year) in prefix:
+                    score += 20
+                if "общие продажи" in low_segment:
+                    score += 20
+                if "комитета автопроизводителей" in low_segment or "аеб" in low_segment:
+                    score += 8
+                if "ппк" not in low_segment and "ppk" not in low_segment:
+                    score += 5
+                if re.search(
+                    r"квартал|полугод|девять месяцев|за\s+\d+[-\s]*(?:ти\s+)?месяц|"
+                    r"январ\w*\s*[-–—]",
+                    prefix,
+                ):
+                    score -= 160
+
+                direct_candidates.append((score, -month_match.start(), value))
+
+        if direct_candidates:
+            direct_candidates.sort(reverse=True)
+            return direct_candidates[0][2]
+
+        sentences = re.split(r"(?<=[.!?])\s+", normalized)
+        candidates: list[tuple[int, int, int, int]] = []
+
+        sentence_chunks: list[tuple[int, str]] = []
+        for idx, sentence in enumerate(sentences):
+            sentence_chunks.append((idx, sentence))
+            if idx + 1 < len(sentences):
+                sentence_chunks.append((idx, f"{sentence} {sentences[idx + 1]}"))
+
+        for sentence_idx, sentence in sentence_chunks:
+            low = sentence.lower()
+            if not re.search(month_pattern, low, flags=re.IGNORECASE):
+                continue
+
+            if not any(token in low for token in ("продаж", "рын", "состав", "продан", "достиг")):
+                continue
+
+            month_match = re.search(
+                month_pattern,
+                low,
+                flags=re.IGNORECASE,
+            )
+            month_pos = month_match.start() if month_match else 0
+            for match in re.finditer(r"(?<!\d)(\d[\d\s,.]{2,20}\d)(?!\d)", sentence):
+                nearby = sentence[max(0, match.start() - 12):match.end() + 12].lower()
+                if re.search(r"\d{4}\s*/\s*\d{4}", nearby):
+                    continue
+                if "тел" in nearby or nearby.strip().startswith("+"):
+                    continue
+
+                value = cls._extract_int_token(match.group(1))
+                if value is None or value == year or not (10_000 <= value <= 3_000_000):
+                    continue
+
+                prefix = sentence[max(0, match.start() - 90):match.start()].lower()
+                score = 100
+                if str(year) in low:
+                    score += 8
+                if "ппк" not in low and "ppk" not in low:
+                    score += 5
+                if match.start() > month_pos:
+                    score += 12
+                if re.search(r"составил[аио]?|составило|продан[ыо]?|достиг", low):
+                    score += 6
+                if re.search(r"составил[аио]?|составило|продан[ыо]?|достиг", prefix):
+                    score += 28
+                if re.search(month_pattern, prefix, flags=re.IGNORECASE):
+                    score += 22
+                if re.search(
+                    r"квартал|полугод|девять месяцев|за\s+\d+[-\s]*(?:ти\s+)?месяц|"
+                    r"январ\w*\s*[-–—]",
+                    prefix,
+                ):
+                    score -= 85
+                if re.search(r"или\s+на|больше|меньше|выше|ниже", prefix[-35:]):
+                    score -= 22
+                if "общие продажи" in low:
+                    score += 35
+                if "комитета автопроизводителей" in low or "аеб" in low:
+                    score += 10
+
+                candidates.append((score, -sentence_idx, -match.start(), value))
+
+        if not candidates:
+            return None
+
+        candidates.sort(reverse=True)
+        return candidates[0][3]
+
+    @classmethod
     def _get_auto_sales_from_local_aeb(cls, year: int, month: int) -> Optional[AutoSalesStats]:
         rows = cls._load_aeb_rows()
         if not rows:
@@ -209,16 +389,19 @@ class ReportGenerator:
         primary: list[dict] = []
         aggregate: list[dict] = []
         for row in rows:
+            name_text = " ".join(
+                str(row.get(k, ""))
+                for k in ("pdf_name", "pdf_url", "local_pdf_path")
+            )
             text = " ".join(
                 str(row.get(k, ""))
                 for k in ("pdf_name", "title", "period", "pdf_url", "local_pdf_path")
             )
-            ym = cls._extract_year_month_from_text(text)
+            ym = cls._extract_year_month_from_text(name_text) or cls._extract_year_month_from_text(text)
             if ym != (year, month):
                 continue
 
-            low = text.lower()
-            if any(token in low for token in ("q1", "q2", "q3", "q4", "hy1", "1hy", "year", "ye")):
+            if cls._is_aggregate_aeb_row(row):
                 aggregate.append(row)
             else:
                 primary.append(row)
@@ -228,14 +411,32 @@ class ReportGenerator:
             return None
 
         def score(r: dict) -> tuple:
+            monthly_total = cls._extract_monthly_sales_units_from_text(
+                r.get("first_page_text", ""), year, month
+            )
             has_total = 1 if r.get("total_sales_units") is not None else 0
+            has_monthly_total = 1 if monthly_total is not None else 0
             release = r.get("release_date") or ""
-            return (has_total, release)
+            return (has_monthly_total, has_total, release)
 
         best = sorted(candidates, key=score, reverse=True)[0]
+        is_aggregate = best in aggregate
+        monthly_total = cls._extract_monthly_sales_units_from_text(
+            best.get("first_page_text", ""), year, month
+        )
         total_raw = best.get("total_sales_units")
-        total_int = int(total_raw) if total_raw is not None else None
-        if total_int is None:
+        indexed_total = int(total_raw) if total_raw is not None else None
+
+        if not is_aggregate:
+            total_int = indexed_total if indexed_total is not None else monthly_total
+        elif indexed_total is not None and indexed_total <= 220_000:
+            total_int = indexed_total
+        elif monthly_total is not None:
+            total_int = monthly_total
+        else:
+            total_int = None
+
+        if total_int is None and not is_aggregate:
             total_int = cls._infer_total_sales_units_from_text(best.get("first_page_text", ""))
         local_pdf = best.get("local_pdf_path") or ""
         source_url = best.get("pdf_url") or local_pdf
@@ -246,24 +447,27 @@ class ReportGenerator:
                 status="error",
                 details=(
                     "В локальном AEB-индексе найден PDF за период, "
-                    "но поле total_sales_units пустое."
+                    "но месячное значение продаж не удалось выделить из текста."
                 ),
             )
+
+        details = (
+            "Локальный индекс AEB: "
+            f"({best.get('pdf_name', 'без имени')}, релиз {best.get('release_date', 'n/a')})"
+        )
+        if is_aggregate and monthly_total is not None and total_int == monthly_total:
+            details += ". Релиз содержит также агрегированный период; использовано месячное значение из текста."
+        elif is_aggregate:
+            details += ". Релиз содержит также агрегированный период; использовано месячное значение из индекса."
+        else:
+            details += "."
 
         return AutoSalesStats(
             source_url=source_url,
             status="ok",
             total_sales=total_int,
             top_brands=None,
-            details=(
-                "Локальный индекс AEB: "
-                f"({best.get('pdf_name', 'без имени')}, релиз {best.get('release_date', 'n/a')})"
-                + (
-                    ". Внимание: выбран агрегированный отчет (Q/HY/YE), число может быть не только за месяц."
-                    if best in aggregate else
-                    "."
-                )
-            ),
+            details=details,
         )
 
     @classmethod
@@ -482,8 +686,29 @@ class ReportGenerator:
     @classmethod
     def _extract_period_label(cls, text: str, fallback_month: int, fallback_year: int) -> str:
         first_chunk = cls._normalize_spaces(" ".join(text.splitlines()[:40])).lower()
+        month_word = (
+            r"январ(?:ь|я|е)?|феврал(?:ь|я|е)?|март(?:а|е)?|апрел(?:ь|я|е)?|"
+            r"ма(?:й|я|е)|июн(?:ь|я|е)?|июл(?:ь|я|е)?|август(?:а|е)?|"
+            r"сентябр(?:ь|я|е)?|октябр(?:ь|я|е)?|ноябр(?:ь|я|е)?|декабр(?:ь|я|е)?"
+        )
+        range_match = re.search(
+            rf"(?P<start>{month_word})\s*[-–—]\s*(?P<end>{month_word})\s+"
+            r"(?P<year>\d{4})\s+год[а]?",
+            first_chunk,
+            flags=re.IGNORECASE,
+        )
+        if range_match:
+            return (
+                f"{range_match.group('start')}-{range_match.group('end')} "
+                f"{range_match.group('year')} года"
+            )
+
+        year_only_match = re.search(r"\b(?P<year>20\d{2})\s+год\b", first_chunk)
+        if year_only_match and fallback_month == 12:
+            return f"{year_only_match.group('year')} год"
+
         m = re.search(
-            r"(январ[ьяе]|феврал[ьяе]|март[ае]|апрел[ьяе]|ма[йея]|июн[ьяе]|июл[ьяе]|август[ае]|сентябр[ьяе]|октябр[ьяе]|ноябр[ьяе]|декабр[ьяе])\s+(\d{4})\s+года",
+            rf"({month_word})\s+(\d{{4}})\s+года",
             first_chunk,
             flags=re.IGNORECASE,
         )
@@ -603,10 +828,11 @@ class ReportGenerator:
 
     @classmethod
     def _build_key_facts(cls, metrics: PdfMetrics, month: int, year: int) -> list[str]:
-        month_prep = cls.get_month_name_prepositional(month)
-        month_nom = cls.get_month_name_nominative(month)
-
         facts: list[str] = [
+            cls._fmt_metric_line(
+                "Период отчета",
+                metrics.period_label,
+            ),
             cls._fmt_metric_line(
                 "Оборот розничной торговли",
                 f"{metrics.retail_turnover_bln} млрд руб." if metrics.retail_turnover_bln else None,
@@ -650,7 +876,7 @@ class ReportGenerator:
         if summary_parts:
             facts.append("")
             facts.append(
-                f"Итог за {month_nom} {year} года: " + "; ".join(summary_parts) + "."
+                f"Итог за {metrics.period_label}: " + "; ".join(summary_parts) + "."
             )
 
         return facts
