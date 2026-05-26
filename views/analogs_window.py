@@ -110,17 +110,17 @@ class AnalogsWindow:
                 if col == "Цена" and value:
                     try:
                         value = f"{int(float(value)):,}".replace(",", " ")
-                    except:
+                    except (ValueError, TypeError):
                         pass
                 elif col == "Пробег" and value:
                     try:
                         value = f"{int(float(value)):,}".replace(",", " ")
-                    except:
+                    except (ValueError, TypeError):
                         pass
                 elif col == "Мощность" and value:
                     try:
                         value = f"{int(float(value))}".replace(",", " ")
-                    except:
+                    except (ValueError, TypeError):
                         pass
                 
                 values.append(value)

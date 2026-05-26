@@ -1,6 +1,11 @@
+import logging
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
+
 from kiril.report_generator import main as report_main
+
+logger = logging.getLogger(__name__)
 
 
 class ResultWindow:
@@ -96,33 +101,36 @@ class ResultWindow:
         progress_bar.pack(pady=10)
         
         def update_progress(message, value):
+            self.window.after(0, lambda m=message, v=value: _apply_progress(m, v))
+
+        def _apply_progress(message, value):
             progress_var.set(message)
             progress_bar['value'] = value
-            progress_window.update()
-        
+
+        def _on_search_complete(analogs):
+            progress_window.destroy()
+            if not analogs:
+                messagebox.showinfo("Поиск аналогов", "Аналоги не найдены")
+                return
+            from views.analogs_window import AnalogsWindow
+            AnalogsWindow(self.window, analogs)
+
+        def _on_search_error(error_msg):
+            progress_window.destroy()
+            messagebox.showerror("Ошибка", f"Ошибка при поиске аналогов:\n{error_msg}")
+
         def search_thread():
             try:
                 analogs = self.controller.find_similar_vehicles(
-                    self.id, 
+                    self.id,
                     progress_callback=update_progress
                 )
-                
-                progress_window.destroy()
-                
-                if not analogs:
-                    messagebox.showinfo("Поиск аналогов", "Аналоги не найдены")
-                    return
-                
-                from views.analogs_window import AnalogsWindow
-                AnalogsWindow(self.window, analogs)
-                
+                self.window.after(0, lambda: _on_search_complete(analogs))
             except Exception as e:
-                progress_window.destroy()
-                messagebox.showerror("Ошибка", f"Ошибка при поиске аналогов:\n{str(e)}")
-        
-        import threading
-        thread = threading.Thread(target=search_thread)
-        thread.daemon = True
+                logger.exception("Error searching for analogs")
+                self.window.after(0, lambda: _on_search_error(str(e)))
+
+        thread = threading.Thread(target=search_thread, daemon=True)
         thread.start()
 
     def _go_back(self):

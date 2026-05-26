@@ -25,7 +25,7 @@ ECONOMIC_DATA = {
         'assessment': 'Экономика России сохраняет положительную динамику развития. Рост потребительского спроса и промышленного производства обеспечивают устойчивое развитие.'
     },
     (2024, 5): {
-        'inflation': 7.95, 'retail_trade': 104.2, 'unemployment': 2.4,
+        'inflation': 7.95, 'retail_trade': 104.2, 'unemployment': 2.4,  
         'usd_rate': 89.34, 'car_sales': 95678, 'car_growth': 9.7,
         'assessment': 'Российская экономика продолжает рост на фоне стабильного потребительского спроса и увеличения инвестиций в основной капитал.'
     },
@@ -193,55 +193,53 @@ def init_database():
         os.remove(DB_PATH)
         print(f"Удалена существующая база данных: {DB_PATH}")
 
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS monthly_reports (
-            year INTEGER NOT NULL,
-            month INTEGER NOT NULL,
-            inflation REAL NOT NULL,
-            retail_trade REAL NOT NULL,
-            unemployment REAL NOT NULL,
-            usd_rate REAL NOT NULL,
-            car_sales INTEGER NOT NULL,
-            car_growth REAL NOT NULL,
-            assessment TEXT NOT NULL,
-            PRIMARY KEY (year, month),
-            CHECK (month >= 1 AND month <= 12)
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS monthly_reports (
+                year INTEGER NOT NULL,
+                month INTEGER NOT NULL,
+                inflation REAL NOT NULL,
+                retail_trade REAL NOT NULL,
+                unemployment REAL NOT NULL,
+                usd_rate REAL NOT NULL,
+                car_sales INTEGER NOT NULL,
+                car_growth REAL NOT NULL,
+                assessment TEXT NOT NULL,
+                PRIMARY KEY (year, month),
+                CHECK (month >= 1 AND month <= 12)
+            )
+        """)
 
-    records = []
-    for (year, month), data in ECONOMIC_DATA.items():
-        records.append((
-            year, month,
-            data['inflation'], data['retail_trade'], data['unemployment'],
-            data['usd_rate'], data['car_sales'], data['car_growth'],
-            data['assessment']
-        ))
+        records = []
+        for (year, month), data in ECONOMIC_DATA.items():
+            records.append((
+                year, month,
+                data['inflation'], data['retail_trade'], data['unemployment'],
+                data['usd_rate'], data['car_sales'], data['car_growth'],
+                data['assessment']
+            ))
 
-    cursor.executemany("""
-        INSERT INTO monthly_reports 
-        (year, month, inflation, retail_trade, unemployment, usd_rate, car_sales, car_growth, assessment)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, records)
+        cursor.executemany("""
+            INSERT INTO monthly_reports
+            (year, month, inflation, retail_trade, unemployment, usd_rate, car_sales, car_growth, assessment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, records)
 
-    conn.commit()
+        conn.commit()
 
-    cursor.execute("SELECT COUNT(*) FROM monthly_reports")
-    count = cursor.fetchone()[0]
-    print(f"✓ База данных создана: {DB_PATH}")
-    print(f"✓ Записей добавлено: {count}")
-    print(f"\nДоступные периоды:")
-    cursor.execute("SELECT DISTINCT year FROM monthly_reports ORDER BY year")
-    years = [row[0] for row in cursor.fetchall()]
-    for year in years:
-        cursor.execute("SELECT COUNT(*) FROM monthly_reports WHERE year=?", (year,))
-        months_count = cursor.fetchone()[0]
-        print(f"  {year}: {months_count} месяцев")
-
-    conn.close()
+        cursor.execute("SELECT COUNT(*) FROM monthly_reports")
+        count = cursor.fetchone()[0]
+        print(f"✓ База данных создана: {DB_PATH}")
+        print(f"✓ Записей добавлено: {count}")
+        print(f"\nДоступные периоды:")
+        cursor.execute("SELECT DISTINCT year FROM monthly_reports ORDER BY year")
+        years = [row[0] for row in cursor.fetchall()]
+        for year in years:
+            cursor.execute("SELECT COUNT(*) FROM monthly_reports WHERE year=?", (year,))
+            months_count = cursor.fetchone()[0]
+            print(f"  {year}: {months_count} месяцев")
 
 
 if __name__ == "__main__":

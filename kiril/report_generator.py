@@ -1,6 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
+import logging
 import re
 import tkinter as tk
 from dataclasses import dataclass
@@ -12,6 +13,8 @@ from typing import Optional
 
 from pypdf import PdfReader
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -52,6 +55,15 @@ class ReportGenerator:
     }
     ENABLE_ONLINE_AUTO_SALES_FALLBACK = False
 
+    MIN_PLAUSIBLE_SALES = 10_000
+    MAX_PLAUSIBLE_SALES = 3_000_000
+
+    _AGGREGATE_PERIOD_RE = re.compile(
+        r"квартал|полугод|девять месяцев|за\s+\d+[-\s]*(?:ти\s+)?месяц|"
+        r"январ\w*\s*[-–—]",
+        re.IGNORECASE,
+    )
+
     MONTH_NAMES = {
         1: "январе", 2: "феврале", 3: "марте", 4: "апреле",
         5: "мае", 6: "июне", 7: "июле", 8: "августе",
@@ -82,6 +94,7 @@ class ReportGenerator:
         11: r"ноябр(?:ь|я|е)?|november",
         12: r"декабр(?:ь|я|е)?|december",
     }
+    _ALL_MONTH_WORDS_PATTERN = "|".join(MONTH_WORD_RE.values())
 
     # Поддерживает имена вида:
     # osn-01-2026.pdf, Osn-09-2014_2.pdf, osn-08-2019(3).pdf
@@ -130,8 +143,9 @@ class ReportGenerator:
         try:
             with open(cls.AUTO_SALES_CACHE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data if isinstance(data, dict) else {}
+            return data if type(data) is dict else {}
         except Exception:
+            logger.debug("Failed to load auto sales cache from %s", cls.AUTO_SALES_CACHE_PATH)
             return {}
 
     @classmethod
@@ -141,7 +155,7 @@ class ReportGenerator:
             with open(cls.AUTO_SALES_CACHE_PATH, "w", encoding="utf-8") as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            logger.debug("Failed to save auto sales cache to %s", cls.AUTO_SALES_CACHE_PATH)
 
     @classmethod
     def _load_aeb_rows(cls) -> list[dict]:
@@ -152,8 +166,9 @@ class ReportGenerator:
             return cls._aeb_rows_cache
         try:
             rows = json.loads(cls.AEB_INDEX_PATH.read_text(encoding="utf-8"))
-            cls._aeb_rows_cache = rows if isinstance(rows, list) else []
+            cls._aeb_rows_cache = rows if type(rows) is list else []
         except Exception:
+            logger.debug("Failed to load AEB index from %s", cls.AEB_INDEX_PATH)
             cls._aeb_rows_cache = []
         return cls._aeb_rows_cache
 
@@ -220,7 +235,7 @@ class ReportGenerator:
         for pattern in phrase_patterns:
             for raw in re.findall(pattern, low, flags=re.IGNORECASE):
                 num = cls._extract_int_token(raw)
-                if num and 10_000 <= num <= 3_000_000:
+                if num and cls.MIN_PLAUSIBLE_SALES <= num <= cls.MAX_PLAUSIBLE_SALES:
                     return num
 
         # Приоритет 2: поиск числа рядом с единицами измерения ("шт"/"units").
@@ -230,7 +245,7 @@ class ReportGenerator:
         for pattern in context_patterns:
             for raw in re.findall(pattern, low, flags=re.IGNORECASE):
                 num = cls._extract_int_token(raw)
-                if num and 10_000 <= num <= 3_000_000:
+                if num and cls.MIN_PLAUSIBLE_SALES <= num <= cls.MAX_PLAUSIBLE_SALES:
                     return num
 
         return None
@@ -285,7 +300,7 @@ class ReportGenerator:
                 if re.search(r"\d{4}\s*/\s*\d{4}", nearby):
                     continue
                 value = cls._extract_int_token(match.group(1))
-                if value is None or value == year or not (10_000 <= value <= 3_000_000):
+                if value is None or value == year or not (cls.MIN_PLAUSIBLE_SALES <= value <= cls.MAX_PLAUSIBLE_SALES):
                     continue
 
                 prefix = low_segment[:match.start()]
@@ -298,11 +313,7 @@ class ReportGenerator:
                     score += 8
                 if "ппк" not in low_segment and "ppk" not in low_segment:
                     score += 5
-                if re.search(
-                    r"квартал|полугод|девять месяцев|за\s+\d+[-\s]*(?:ти\s+)?месяц|"
-                    r"январ\w*\s*[-–—]",
-                    prefix,
-                ):
+                if cls._AGGREGATE_PERIOD_RE.search(prefix):
                     score -= 160
 
                 direct_candidates.append((score, -month_match.start(), value))
@@ -342,7 +353,7 @@ class ReportGenerator:
                     continue
 
                 value = cls._extract_int_token(match.group(1))
-                if value is None or value == year or not (10_000 <= value <= 3_000_000):
+                if value is None or value == year or not (cls.MIN_PLAUSIBLE_SALES <= value <= cls.MAX_PLAUSIBLE_SALES):
                     continue
 
                 prefix = sentence[max(0, match.start() - 90):match.start()].lower()
@@ -359,11 +370,7 @@ class ReportGenerator:
                     score += 28
                 if re.search(month_pattern, prefix, flags=re.IGNORECASE):
                     score += 22
-                if re.search(
-                    r"квартал|полугод|девять месяцев|за\s+\d+[-\s]*(?:ти\s+)?месяц|"
-                    r"январ\w*\s*[-–—]",
-                    prefix,
-                ):
+                if cls._AGGREGATE_PERIOD_RE.search(prefix):
                     score -= 85
                 if re.search(r"или\s+на|больше|меньше|выше|ниже", prefix[-35:]):
                     score -= 22
@@ -452,7 +459,7 @@ class ReportGenerator:
             )
 
         details = (
-            "Локальный индекс AEB: "
+            "Локальный индекс Ассоциации европейского бизнеса: "
             f"({best.get('pdf_name', 'без имени')}, релиз {best.get('release_date', 'n/a')})"
         )
         if is_aggregate and monthly_total is not None and total_int == monthly_total:
@@ -686,11 +693,7 @@ class ReportGenerator:
     @classmethod
     def _extract_period_label(cls, text: str, fallback_month: int, fallback_year: int) -> str:
         first_chunk = cls._normalize_spaces(" ".join(text.splitlines()[:40])).lower()
-        month_word = (
-            r"январ(?:ь|я|е)?|феврал(?:ь|я|е)?|март(?:а|е)?|апрел(?:ь|я|е)?|"
-            r"ма(?:й|я|е)|июн(?:ь|я|е)?|июл(?:ь|я|е)?|август(?:а|е)?|"
-            r"сентябр(?:ь|я|е)?|октябр(?:ь|я|е)?|ноябр(?:ь|я|е)?|декабр(?:ь|я|е)?"
-        )
+        month_word = cls._ALL_MONTH_WORDS_PATTERN
         range_match = re.search(
             rf"(?P<start>{month_word})\s*[-–—]\s*(?P<end>{month_word})\s+"
             r"(?P<year>\d{4})\s+год[а]?",
@@ -823,8 +826,129 @@ class ReportGenerator:
 
     @staticmethod
     def _fmt_metric_line(label: str, value: Optional[str]) -> str:
-        rendered = value if value else "н/д"
-        return f"{label:.<44} {rendered}"
+        rendered = value if value else "нет данных"
+        width = max(54, len(label) + 3)
+        return f"{label:.<{width}} {rendered}"
+
+    @staticmethod
+    def _fmt_billion_rubles(value: Optional[str]) -> Optional[str]:
+        return f"{value} миллиарда рублей" if value else None
+
+    @staticmethod
+    def _fmt_million_people(value: Optional[str]) -> Optional[str]:
+        return f"{value} миллиона человек" if value else None
+
+    @staticmethod
+    def _plural_ru(number: int, one: str, few: str, many: str) -> str:
+        last_two = number % 100
+        if 11 <= last_two <= 14:
+            return many
+        last = number % 10
+        if last == 1:
+            return one
+        if 2 <= last <= 4:
+            return few
+        return many
+
+    @classmethod
+    def _fmt_car_count(cls, value: Optional[int]) -> str:
+        if value is None:
+            return "нет данных"
+        rendered = f"{value:,}".replace(",", " ")
+        noun = cls._plural_ru(value, "автомобиль", "автомобиля", "автомобилей")
+        return f"{rendered} {noun}"
+
+    @staticmethod
+    def _parse_percent_index(value: Optional[str]) -> Optional[float]:
+        if not value:
+            return None
+        normalized = value.replace(" ", "").replace(",", ".")
+        try:
+            return float(normalized)
+        except ValueError:
+            return None
+
+    @classmethod
+    def _describe_index_change(cls, value: Optional[str], baseline: str) -> str:
+        parsed = cls._parse_percent_index(value)
+        if parsed is None:
+            return f"значение к {baseline} не найдено"
+
+        diff = parsed - 100
+        diff_text = f"{abs(diff):.1f}".replace(".", ",")
+        if abs(diff) < 0.05:
+            return f"практически на уровне {baseline}"
+        if diff > 0:
+            return f"выше {baseline} примерно на {diff_text}%"
+        return f"ниже {baseline} примерно на {diff_text}%"
+
+    @classmethod
+    def _build_explanatory_sections(cls, metrics: PdfMetrics) -> str:
+        period = metrics.period_label
+
+        industrial_value = metrics.industrial_yoy_pct or "нет данных"
+        industrial_change = cls._describe_index_change(
+            metrics.industrial_yoy_pct,
+            "соответствующего периода прошлого года",
+        )
+
+        retail_turnover = (
+            cls._fmt_billion_rubles(metrics.retail_turnover_bln)
+            if metrics.retail_turnover_bln else
+            "нет данных"
+        )
+        retail_value = metrics.retail_trade_yoy_pct or "нет данных"
+        retail_change = cls._describe_index_change(
+            metrics.retail_trade_yoy_pct,
+            "соответствующего периода прошлого года",
+        )
+
+        cpi_year = metrics.cpi_yoy_pct or "нет данных"
+        cpi_month = metrics.cpi_month_pct or "нет данных"
+        cpi_year_change = cls._describe_index_change(
+            metrics.cpi_yoy_pct,
+            "соответствующего периода прошлого года",
+        )
+        cpi_month_change = cls._describe_index_change(
+            metrics.cpi_month_pct,
+            "предыдущего месяца",
+        )
+
+        unemployed = (
+            cls._fmt_million_people(metrics.unemployment_mln)
+            if metrics.unemployment_mln else
+            "нет данных"
+        )
+        unemployment_value = metrics.unemployment_yoy_pct or "нет данных"
+        unemployment_change = cls._describe_index_change(
+            metrics.unemployment_yoy_pct,
+            "соответствующего периода прошлого года",
+        )
+
+        return f"""[1] ПРОИЗВОДСТВО
+Индекс промышленного производства за {period} составил {industrial_value}% к соответствующему периоду прошлого года. Это означает, что промышленный выпуск был {industrial_change}. Показатель отражает динамику добычи полезных ископаемых, обрабатывающих производств, энергетики, газоснабжения, водоснабжения и смежных промышленных услуг.
+
+[2] РОЗНИЧНАЯ ТОРГОВЛЯ
+Оборот розничной торговли за {period} составил {retail_turnover}. Индекс розничной торговли к соответствующему периоду прошлого года равен {retail_value}%, то есть розничные продажи были {retail_change}. В этот показатель входят продажи товаров населению через магазины, рынки, ярмарки и другие розничные каналы.
+
+[3] ЦЕНЫ И ИНФЛЯЦИЯ
+Индекс потребительских цен за {period} составил {cpi_year}% к соответствующему периоду прошлого года и {cpi_month}% к предыдущему месяцу. В годовом сравнении уровень потребительских цен был {cpi_year_change}; в месячном сравнении цены были {cpi_month_change}. Индекс потребительских цен показывает, как меняется стоимость набора товаров и услуг, которые покупают домохозяйства.
+
+[4] ЗАНЯТОСТЬ И БЕЗРАБОТИЦА
+Численность безработных в возрасте 15 лет и старше за {period} составила {unemployed}. Показатель к соответствующему периоду прошлого года равен {unemployment_value}%, то есть численность безработных была {unemployment_change}. Безработными считаются люди без работы, которые искали работу и были готовы приступить к ней."""
+
+    @staticmethod
+    def _build_abbreviation_notes() -> str:
+        return "\n".join(
+            [
+                "Индекс потребительских цен - показатель изменения цен на товары и услуги для населения.",
+                "Год к году - сравнение с соответствующим периодом предыдущего года.",
+                "Миллиард рублей - тысяча миллионов рублей.",
+                "Миллион человек - тысяча тысяч человек.",
+                "Ассоциация европейского бизнеса - источник статистики продаж новых легковых и легких коммерческих автомобилей.",
+                "PDF-файл - электронный документ, из которого загружаются исходные данные.",
+            ]
+        )
 
     @classmethod
     def _build_key_facts(cls, metrics: PdfMetrics, month: int, year: int) -> list[str]:
@@ -835,43 +959,43 @@ class ReportGenerator:
             ),
             cls._fmt_metric_line(
                 "Оборот розничной торговли",
-                f"{metrics.retail_turnover_bln} млрд руб." if metrics.retail_turnover_bln else None,
+                cls._fmt_billion_rubles(metrics.retail_turnover_bln),
             ),
             cls._fmt_metric_line(
                 "Розница к прошлому году",
                 f"{metrics.retail_trade_yoy_pct}%" if metrics.retail_trade_yoy_pct else None,
             ),
             cls._fmt_metric_line(
-                "ИПЦ к прошлому году",
+                "Индекс потребительских цен к прошлому году",
                 f"{metrics.cpi_yoy_pct}%" if metrics.cpi_yoy_pct else None,
             ),
             cls._fmt_metric_line(
-                "ИПЦ к предыдущему месяцу",
+                "Индекс потребительских цен к предыдущему месяцу",
                 f"{metrics.cpi_month_pct}%" if metrics.cpi_month_pct else None,
             ),
             cls._fmt_metric_line(
-                "Безработные (15+)",
-                f"{metrics.unemployment_mln} млн чел." if metrics.unemployment_mln else None,
+                "Безработные (15 лет и старше)",
+                cls._fmt_million_people(metrics.unemployment_mln),
             ),
             cls._fmt_metric_line(
                 "Безработица к прошлому году",
                 f"{metrics.unemployment_yoy_pct}%" if metrics.unemployment_yoy_pct else None,
             ),
             cls._fmt_metric_line(
-                "Промпроизводство к прошлому году",
+                "Промышленное производство к прошлому году",
                 f"{metrics.industrial_yoy_pct}%" if metrics.industrial_yoy_pct else None,
             ),
         ]
 
         summary_parts: list[str] = []
         if metrics.retail_trade_yoy_pct:
-            summary_parts.append(f"розница {metrics.retail_trade_yoy_pct}% г/г")
+            summary_parts.append(f"розничная торговля {metrics.retail_trade_yoy_pct}% к прошлому году")
         if metrics.cpi_yoy_pct:
-            summary_parts.append(f"ИПЦ {metrics.cpi_yoy_pct}% г/г")
+            summary_parts.append(f"потребительские цены {metrics.cpi_yoy_pct}% к прошлому году")
         if metrics.industrial_yoy_pct:
-            summary_parts.append(f"промпроизводство {metrics.industrial_yoy_pct}% г/г")
+            summary_parts.append(f"промышленное производство {metrics.industrial_yoy_pct}% к прошлому году")
         if metrics.unemployment_mln:
-            summary_parts.append(f"безработные {metrics.unemployment_mln} млн")
+            summary_parts.append(f"безработные {cls._fmt_million_people(metrics.unemployment_mln)}")
 
         if summary_parts:
             facts.append("")
@@ -881,13 +1005,12 @@ class ReportGenerator:
 
         return facts
 
-    @staticmethod
-    def _format_auto_sales_block(stats: AutoSalesStats) -> str:
+    @classmethod
+    def _format_auto_sales_block(cls, stats: AutoSalesStats) -> str:
         lines: list[str] = []
 
         if stats.status in ("ok", "cached"):
-            total = f"{stats.total_sales:,}".replace(",", " ") if stats.total_sales is not None else "н/д"
-            lines.append(f"Общий объем продаж: {total} авто.")
+            lines.append(f"Общий объем продаж: {cls._fmt_car_count(stats.total_sales)}.")
 
             if stats.top_brands:
                 lines.append("Топ-5 брендов по продажам:")
@@ -902,7 +1025,7 @@ class ReportGenerator:
                 lines.append(f"Статус: {stats.details}")
             return "\n".join(lines)
 
-        lines.append("Данные о продажах авто недоступны для текущего периода.")
+        lines.append("Данные о продажах автомобилей недоступны для текущего периода.")
         if stats.details:
             lines.append(f"Причина: {stats.details}")
         lines.append(f"Ссылка: {stats.source_url}")
@@ -922,22 +1045,6 @@ class ReportGenerator:
         metrics = cls._extract_metrics(text, month, year)
         auto_sales = cls._get_auto_sales_stats(year, month)
 
-        summary_prod = cls._find_best_snippet(
-            text,
-            ["промышленного производства", "индекс промышленного производства", "производство товаров и услуг"],
-        )
-        summary_retail = cls._find_best_snippet(
-            text,
-            ["розничная торговля", "оборот розничной торговли", "рынки товаров и услуг"],
-        )
-        summary_prices = cls._find_best_snippet(
-            text,
-            ["индекс потребительских цен", "потребительские цены", "цены производителей"],
-        )
-        summary_labor = cls._find_best_snippet(
-            text,
-            ["занятость и безработица", "общая численность безработных", "уровень безработицы"],
-        )
         separator = "=" * 78
         sub_separator = "-" * 78
 
@@ -946,21 +1053,15 @@ class ReportGenerator:
 {sub_separator}
 {chr(10).join(cls._build_key_facts(metrics, month, year))}
 
-КРАТКИЕ ВЫДЕРЖКИ ИЗ ДОКУМЕНТА
+РАСШИФРОВКА СОКРАЩЕНИЙ И ТЕРМИНОВ
 {sub_separator}
-[1] ПРОИЗВОДСТВО
-{cls._clean_excerpt(summary_prod)}
+{cls._build_abbreviation_notes()}
 
-[2] РОЗНИЧНАЯ ТОРГОВЛЯ
-{cls._clean_excerpt(summary_retail)}
+КРАТКОЕ ПОЯСНЕНИЕ ПО РАЗДЕЛАМ
+{sub_separator}
+{cls._build_explanatory_sections(metrics)}
 
-[3] ЦЕНЫ
-{cls._clean_excerpt(summary_prices)}
-
-[4] ЗАНЯТОСТЬ И БЕЗРАБОТИЦА
-{cls._clean_excerpt(summary_labor)}
-
-СТАТИСТИКА ПРОДАЖ АВТОМОБИЛЕЙ (AEB PDF)
+СТАТИСТИКА ПРОДАЖ АВТОМОБИЛЕЙ (Ассоциация европейского бизнеса, PDF-файл)
 {sub_separator}
 {cls._format_auto_sales_block(auto_sales)}
 """

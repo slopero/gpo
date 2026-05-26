@@ -1,12 +1,22 @@
-from pathlib import Path
-import sqlite3
-import pandas as pd
-from typing import List, Dict, Any, Optional
-from datetime import datetime
+import logging
 import re
+import sqlite3
+from datetime import datetime
+from pathlib import Path
 from tkinter import filedialog, messagebox
+from typing import Any, Optional
+
+import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 class ExternalDB:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
     def __init__(self, db_path: Optional[Path] = None, progress_callback=None):
         self.db_path = db_path
         self.data = None
@@ -125,7 +135,7 @@ class ExternalDB:
                     self.column_mapping[target] = col_lower[name]
                     break
 
-    def find_similar(self, source_data: Dict[str, Any]) -> List[Dict]:
+    def find_similar(self, source_data: dict[str, Any]) -> list[dict]:
         """Основной метод поиска аналогов"""
         if self.db_type == 'sqlite' and self.conn:
             return self._find_similar_sqlite(source_data)
@@ -133,7 +143,7 @@ class ExternalDB:
             return self._find_similar_dataframe(source_data)
         return []
 
-    def _find_similar_sqlite(self, source_data: Dict[str, Any]) -> List[Dict]:
+    def _find_similar_sqlite(self, source_data: dict[str, Any]) -> list[dict]:
         """Поиск аналогов в SQLite"""
         if not self.table_name: 
             return []
@@ -243,10 +253,11 @@ class ExternalDB:
                 col_names = [desc[0] for desc in self.cursor.description]
                 return [dict(zip(col_names, row)) for row in rows]
             return []
-        except Exception as e:
+        except Exception:
+            logger.exception("SQL query failed in _find_similar_sqlite")
             return []
 
-    def _find_similar_dataframe(self, source_data: Dict[str, Any]) -> List[Dict]:
+    def _find_similar_dataframe(self, source_data: dict[str, Any]) -> list[dict]:
         """Поиск аналогов в DataFrame (CSV/Excel)"""
         if self.data is None or self.data.empty:
             return []
@@ -284,15 +295,15 @@ class ExternalDB:
         return str(val).strip() if val else ""
 
     def _to_int(self, val) -> Optional[int]:
-        try: 
+        try:
             return int(float(str(val).replace(',', '.')))
-        except: 
+        except (ValueError, TypeError):
             return None
 
     def _to_float(self, val) -> Optional[float]:
-        try: 
+        try:
             return float(str(val).replace(',', '.'))
-        except: 
+        except (ValueError, TypeError):
             return None
 
     def close(self):

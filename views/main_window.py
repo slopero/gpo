@@ -50,8 +50,8 @@ class MainWindow:
             side="left", padx=8
         )
 
-    """Создание поля с меткой и виджетом ввода (Entry или Combobox)"""
     def _create_field(self, row, label_text, key, options=None):
+        """Создание поля с меткой и виджетом ввода (Entry или Combobox)."""
         var = tk.StringVar()
         tk.Label(self.root, text=f"{label_text}:").grid(row=row, column=0, padx=10, pady=6, sticky="w")
 
@@ -67,8 +67,8 @@ class MainWindow:
         self.field_vars[key] = var
         self.field_labels[key] = label_text
     
-    """Сохранение данных при нажатии кнопки и отображение результата"""
     def submit_form(self):
+        """Сохранение данных при нажатии кнопки и отображение результата."""
         data = {key: var.get().strip() for key, var in self.field_vars.items()}
 
         success, message = self.controller.save_params(data)
