@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import re
@@ -32,6 +32,7 @@ class AutoSalesStats:
     status: str
     total_sales: Optional[int] = None
     top_brands: Optional[list[tuple[str, int]]] = None
+    top_models: Optional[list[tuple[str, int]]] = None
     details: Optional[str] = None
 
 
@@ -441,6 +442,11 @@ class ReportGenerator:
         local_pdf = best.get("local_pdf_path") or ""
         source_url = best.get("pdf_url") or local_pdf
 
+        top_models = None
+        if local_pdf:
+            full_pdf_path = str(cls.BASE_DIR / local_pdf)
+            top_models = cls._extract_top_models_from_pdf(full_pdf_path)
+
         if total_int is None:
             return AutoSalesStats(
                 source_url=source_url,
@@ -467,6 +473,7 @@ class ReportGenerator:
             status="ok",
             total_sales=total_int,
             top_brands=None,
+            top_models=top_models,
             details=details,
         )
 
@@ -510,7 +517,7 @@ class ReportGenerator:
     @staticmethod
     def _extract_first_int(text: str) -> Optional[int]:
         # Значения типа "22 289", "22,289", "22289".
-        m = re.search(r"(?<!\d)(\d[\d\s,]{1,20}\d|\d)(?!\d)", text)
+        m = re.search(r"(?<!\d)(\d[\d\s,]{0,20}\d|\d)(?!\d)", text)
         if not m:
             return None
         raw = m.group(1).replace(" ", "").replace(",", "")
@@ -518,6 +525,45 @@ class ReportGenerator:
             return int(raw)
         except ValueError:
             return None
+
+    @classmethod
+    def _extract_top_models_from_pdf(cls, pdf_path: str) -> Optional[list[tuple[str, int]]]:
+        try:
+            import fitz
+            doc = fitz.open(pdf_path)
+            text = "\n".join((page.get_text() or "") for page in doc)
+            doc.close()
+        except Exception:
+            return None
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        models: list[tuple[str, int]] = []
+        in_table = False
+        current_rank = 1
+        
+        for i, line in enumerate(lines):
+            if "МОДЕЛЬ" in line.upper() and i + 1 < len(lines) and "МАРКА" in lines[i+1].upper():
+                in_table = True
+                continue
+                
+            if in_table:
+                if line == str(current_rank):
+                    if i + 2 < len(lines):
+                        model_name = lines[i+1]
+                        brand_name = lines[i+2]
+                        sales = None
+                        for j in range(i+3, min(i+10, len(lines))):
+                            val = cls._extract_first_int(lines[j])
+                            if val is not None and val > 0 and str(val) != str(current_rank + 1):
+                                sales = val
+                                break
+                        if sales is not None:
+                            full_name = f"{brand_name} {model_name}"
+                            models.append((full_name, sales))
+                            current_rank += 1
+                            if current_rank > 10:
+                                break
+        return models if models else None
 
     @classmethod
     def _extract_auto_sales_from_html(cls, html_text: str, source_url: str) -> AutoSalesStats:
@@ -672,8 +718,15 @@ class ReportGenerator:
         if cached is not None:
             return cached
 
-        reader = PdfReader(str(pdf_path))
-        text = "\n".join((page.extract_text() or "") for page in reader.pages)
+        try:
+            import fitz
+            doc = fitz.open(str(pdf_path))
+            text = "\n".join((page.get_text() or "") for page in doc)
+            doc.close()
+        except Exception:
+            reader = PdfReader(str(pdf_path))
+            text = "\n".join((page.extract_text() or "") for page in reader.pages)
+            
         cls._text_cache[pdf_path] = text
         return text
 
@@ -842,11 +895,11 @@ class ReportGenerator:
                 f"{metrics.retail_trade_yoy_pct}%" if metrics.retail_trade_yoy_pct else None,
             ),
             cls._fmt_metric_line(
-                "ИПЦ к прошлому году",
+                "Индекс потребительских цен к прошлому году",
                 f"{metrics.cpi_yoy_pct}%" if metrics.cpi_yoy_pct else None,
             ),
             cls._fmt_metric_line(
-                "ИПЦ к предыдущему месяцу",
+                "Индекс потребительских цен к предыдущему месяцу",
                 f"{metrics.cpi_month_pct}%" if metrics.cpi_month_pct else None,
             ),
             cls._fmt_metric_line(
@@ -865,11 +918,11 @@ class ReportGenerator:
 
         summary_parts: list[str] = []
         if metrics.retail_trade_yoy_pct:
-            summary_parts.append(f"розница {metrics.retail_trade_yoy_pct}% г/г")
+            summary_parts.append(f"розница {metrics.retail_trade_yoy_pct}% в годовом выражении")
         if metrics.cpi_yoy_pct:
-            summary_parts.append(f"ИПЦ {metrics.cpi_yoy_pct}% г/г")
+            summary_parts.append(f"индекс потребительских цен {metrics.cpi_yoy_pct}% в годовом выражении")
         if metrics.industrial_yoy_pct:
-            summary_parts.append(f"промпроизводство {metrics.industrial_yoy_pct}% г/г")
+            summary_parts.append(f"промышленное производство {metrics.industrial_yoy_pct}% в годовом выражении")
         if metrics.unemployment_mln:
             summary_parts.append(f"безработные {metrics.unemployment_mln} млн")
 
@@ -894,8 +947,15 @@ class ReportGenerator:
                 for idx, (brand, sales) in enumerate(stats.top_brands, start=1):
                     sales_text = f"{sales:,}".replace(",", " ")
                     lines.append(f"{idx}. {brand} — {sales_text}")
-            else:
-                lines.append("Детализация по брендам для этого источника не выделена.")
+                    
+            if stats.top_models:
+                lines.append("Топ-10 моделей по продажам:")
+                for idx, (model, sales) in enumerate(stats.top_models, start=1):
+                    sales_text = f"{sales:,}".replace(",", " ")
+                    lines.append(f"{idx}. {model} — {sales_text}")
+                    
+            if not stats.top_brands and not stats.top_models:
+                lines.append("Детализация по брендам/моделям для этого источника не выделена.")
 
             lines.append(f"Источник: {stats.source_url}")
             if stats.details:
@@ -910,61 +970,17 @@ class ReportGenerator:
 
     @classmethod
     def generate_report(cls, year: int, month: int) -> str:
-        pdf_path = cls._get_pdf_path(year, month)
-        if not pdf_path:
-            return f"Файл отчета не найден: info/osn-{month:02d}-{year}.pdf"
-
+        reports_dir = cls.BASE_DIR / "reports"
+        report_file = reports_dir / f"report_{year}_{month:02d}.txt"
+        
+        if not report_file.exists():
+            return f"Отчет не найден за выбранный период. Ожидался файл: {report_file.name}"
+            
         try:
-            text = cls._read_pdf_text(pdf_path)
+            with open(report_file, "r", encoding="utf-8") as f:
+                return f.read()
         except Exception as exc:
-            return f"Ошибка чтения PDF {pdf_path.name}: {exc}"
-
-        metrics = cls._extract_metrics(text, month, year)
-        auto_sales = cls._get_auto_sales_stats(year, month)
-
-        summary_prod = cls._find_best_snippet(
-            text,
-            ["промышленного производства", "индекс промышленного производства", "производство товаров и услуг"],
-        )
-        summary_retail = cls._find_best_snippet(
-            text,
-            ["розничная торговля", "оборот розничной торговли", "рынки товаров и услуг"],
-        )
-        summary_prices = cls._find_best_snippet(
-            text,
-            ["индекс потребительских цен", "потребительские цены", "цены производителей"],
-        )
-        summary_labor = cls._find_best_snippet(
-            text,
-            ["занятость и безработица", "общая численность безработных", "уровень безработицы"],
-        )
-        separator = "=" * 78
-        sub_separator = "-" * 78
-
-        report = f"""СОЦИАЛЬНО-ЭКОНОМИЧЕСКИЙ ОТЧЕТ
-КЛЮЧЕВЫЕ ПОКАЗАТЕЛИ
-{sub_separator}
-{chr(10).join(cls._build_key_facts(metrics, month, year))}
-
-КРАТКИЕ ВЫДЕРЖКИ ИЗ ДОКУМЕНТА
-{sub_separator}
-[1] ПРОИЗВОДСТВО
-{cls._clean_excerpt(summary_prod)}
-
-[2] РОЗНИЧНАЯ ТОРГОВЛЯ
-{cls._clean_excerpt(summary_retail)}
-
-[3] ЦЕНЫ
-{cls._clean_excerpt(summary_prices)}
-
-[4] ЗАНЯТОСТЬ И БЕЗРАБОТИЦА
-{cls._clean_excerpt(summary_labor)}
-
-СТАТИСТИКА ПРОДАЖ АВТОМОБИЛЕЙ (AEB PDF)
-{sub_separator}
-{cls._format_auto_sales_block(auto_sales)}
-"""
-        return report
+            return f"Ошибка при чтении файла отчета: {exc}"
 
 
 class ReportApp:
