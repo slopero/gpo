@@ -8,6 +8,8 @@ from app.services.valuation.constants import (
     WEAR_COEFFICIENTS,
     BargainingCategory,
     VehicleWearCategory,
+    check_vehicle_localization,
+    detect_vehicle_category,
 )
 from app.services.valuation.engine import (
     PhysicalWearResult,
@@ -56,4 +58,6 @@ __all__ = [
     "calculate_sample_mean",
     "calculate_variation_coefficient",
     "calculate_wear_adjustment",
+    "check_vehicle_localization",
+    "detect_vehicle_category",
 ]

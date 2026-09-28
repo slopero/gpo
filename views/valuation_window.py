@@ -10,6 +10,8 @@ from app.services.valuation.constants import (
     WEAR_COEFFICIENTS,
     BargainingCategory,
     VehicleWearCategory,
+    check_vehicle_localization,
+    detect_vehicle_category,
 )
 from app.services.valuation.schemas import (
     AnalogVehicleInput,
@@ -186,6 +188,24 @@ class ValuationWindow:
         self.res_status = tk.StringVar(
             value="Заполните объект и добавьте минимум 3 аналога, затем нажмите 'Рассчитать'."
         )
+        self.var_localization_hint = tk.StringVar(value="")
+
+        self.var_brand.trace_add("write", self._on_brand_or_vin_change)
+        self.var_vin.trace_add("write", self._on_brand_or_vin_change)
+
+    def _on_brand_or_vin_change(self, *args: Any) -> None:
+        brand = self.var_brand.get().strip()
+        vin = self.var_vin.get().strip()
+        if brand or vin:
+            cat, is_localized, note = check_vehicle_localization(brand, vin=vin)
+            if brand:
+                self.var_category.set(cat)
+            if is_localized:
+                self.var_localization_hint.set(f"💡 {note}")
+            else:
+                self.var_localization_hint.set("")
+        else:
+            self.var_localization_hint.set("")
 
     def _build_ui(self) -> None:
         # Top toolbar
@@ -290,6 +310,16 @@ class ValuationWindow:
             else:
                 entry = ttk.Entry(grid, textvariable=var, width=32)
                 entry.grid(row=row, column=1, sticky="ew", pady=2)
+
+        # Localization hint label
+        lbl_hint = ttk.Label(
+            grid,
+            textvariable=self.var_localization_hint,
+            font=("Segoe UI", 8, "italic"),
+            foreground="#b35900",
+            wraplength=340,
+        )
+        lbl_hint.grid(row=len(fields), column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         grid.columnconfigure(1, weight=1)
 
@@ -701,6 +731,11 @@ class ValuationWindow:
             self.var_mileage.set(str(data["count_kilometers"]))
         if data.get("date_deal"):
             self.var_date.set(str(data["date_deal"]))
+        brand = str(data.get("mark", ""))
+        if brand:
+            vin = str(data.get("vin", ""))
+            type_ts = str(data.get("type_ts", ""))
+            self.var_category.set(detect_vehicle_category(brand, vin=vin, type_ts=type_ts))
 
     def _load_benchmark_gac(self) -> None:
         """Load benchmark GAC M8 parameters from case 4440/25e."""
