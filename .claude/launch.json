@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "vin",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8777", "-d", "vin_country"],
+      "port": 8777
+    }
+  ]
+}
