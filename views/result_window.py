@@ -24,7 +24,7 @@ class ResultWindow:
 
         self.window = tk.Toplevel(parent)
         self.window.title("Поиск аналогов и анализ рынка")
-        self.window.geometry("620x520")
+        self.window.geometry("740x520")
         self.window.protocol("WM_DELETE_WINDOW", self._go_back)
 
         self._center_window()
@@ -50,9 +50,18 @@ class ResultWindow:
         button_row = tk.Frame(self.window)
         button_row.pack(pady=(0, 14))
 
-        tk.Button(button_row, text="Провести анализ рынка", width=20, command=self._handle_action_one).pack(side="left", padx=6)
-        tk.Button(button_row, text="Поиск аналогов", width=20, command=self._handle_action_two).pack(side="left", padx=6)
-        tk.Button(button_row, text="Назад к форме", width=20, command=self._go_back).pack(side="left", padx=6)
+        tk.Button(button_row, text="Провести анализ рынка", width=18, command=self._handle_action_one).pack(side="left", padx=4)
+        tk.Button(button_row, text="Поиск аналогов", width=14, command=self._handle_action_two).pack(side="left", padx=4)
+        tk.Button(
+            button_row,
+            text="Судебная оценка (СК РФ)",
+            width=20,
+            command=self._handle_valuation,
+            bg="#0066cc",
+            fg="white",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=4)
+        tk.Button(button_row, text="Назад к форме", width=13, command=self._go_back).pack(side="left", padx=4)
 
     def _center_window(self):
         """Центрирует окно на экране"""
@@ -65,6 +74,10 @@ class ResultWindow:
 
     def _handle_action_one(self):
         report_main()
+
+    def _handle_valuation(self):
+        from views.valuation_window import ValuationWindow
+        ValuationWindow(self.window, controller=self.controller, initial_data=self.data)
     
     def _handle_action_two(self):
         """Поиск аналогов с выбором БД и прогресс-баром"""

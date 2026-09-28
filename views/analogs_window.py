@@ -29,7 +29,42 @@ class AnalogsWindow:
         
         btn_frame = tk.Frame(self.window)
         btn_frame.pack(pady=(0, 12))
-        tk.Button(btn_frame, text="Закрыть", command=self.window.destroy, width=15).pack()
+        tk.Button(
+            btn_frame,
+            text="⚖️ Передать в судебную оценку",
+            command=self._open_valuation,
+            width=26,
+            bg="#0066cc",
+            fg="white",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=8)
+        tk.Button(btn_frame, text="Закрыть", command=self.window.destroy, width=15).pack(
+            side="left", padx=8
+        )
+
+    def _open_valuation(self):
+        from datetime import datetime
+        from views.valuation_window import ValuationWindow
+        val_win = ValuationWindow(self.window)
+        analogs = []
+        for an in self.analogs:
+            try:
+                price = float(str(an.get("Цена", 0)).replace(" ", "").replace(",", "."))
+                mileage = float(str(an.get("Пробег", 0)).replace(" ", "").replace(",", "."))
+                year = int(str(an.get("Год", 2023)).strip())
+                age = max(1.0, float(datetime.now().year - year))
+                analogs.append({
+                    "name": str(an.get("Название_машины", "Аналог")),
+                    "price": price,
+                    "age_years": age,
+                    "mileage_km": mileage,
+                    "city": str(an.get("Регион", "")),
+                })
+            except Exception:
+                continue
+        if analogs:
+            val_win.analogs_list = analogs
+            val_win._refresh_analogs_table()
     
     def _center_window(self):
         """Центрирует окно на экране"""

@@ -45,10 +45,19 @@ class MainWindow:
         button_row = tk.Frame(self.root)
         button_row.grid(row=len(self.FIELD_CONFIG), column=0, columnspan=2, pady=16)
 
-        tk.Button(button_row, text="Сохранить", command=self.submit_form, width=24).pack(side="left", padx=8)
-        tk.Button(button_row, text="Выбрать из БД", command=self.open_db_records, width=24).pack(
-            side="left", padx=8
+        tk.Button(button_row, text="Сохранить", command=self.submit_form, width=15).pack(side="left", padx=4)
+        tk.Button(button_row, text="Выбрать из БД", command=self.open_db_records, width=15).pack(
+            side="left", padx=4
         )
+        tk.Button(
+            button_row,
+            text="Судебная оценка (СК РФ)",
+            command=self.open_valuation_window,
+            width=22,
+            bg="#0066cc",
+            fg="white",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=4)
 
     """Создание поля с меткой и виджетом ввода (Entry или Combobox)"""
     def _create_field(self, row, label_text, key, options=None):
@@ -119,6 +128,11 @@ class MainWindow:
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
+
+    def open_valuation_window(self):
+        current_data = {key: var.get().strip() for key, var in self.field_vars.items()}
+        from views.valuation_window import ValuationWindow
+        ValuationWindow(self.root, controller=self.controller, initial_data=current_data)
 
     def run(self):
         self.root.mainloop()
