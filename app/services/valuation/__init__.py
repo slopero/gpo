@@ -31,6 +31,7 @@ from app.services.valuation.schemas import (
     ValuationRequest,
     VariationAnalysis,
 )
+from app.services.valuation.selector import AnalogSelector
 from app.services.valuation.service import ValuationService
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "VARIATION_THRESHOLD",
     "WEAR_COEFFICIENTS",
     "AnalogAdjustmentResult",
+    "AnalogSelector",
     "AnalogVehicleInput",
     "BargainingCategory",
     "PhysicalWearResult",

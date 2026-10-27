@@ -127,7 +127,7 @@ class ResultWindow:
                     return
                 
                 from views.analogs_window import AnalogsWindow
-                AnalogsWindow(self.window, analogs)
+                AnalogsWindow(self.window, analogs, target_data=self.data)
                 
             except Exception as e:
                 progress_window.destroy()

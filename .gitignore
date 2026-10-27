@@ -1,2 +1,12 @@
-__pycache__
-.pyc
+# PyInstaller
+build/
+dist/
+
+# Large database
+db/cars.db
+cars.db
+
+# Python
+__pycache__/
+*.pyc
+*.log

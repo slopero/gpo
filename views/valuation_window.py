@@ -1,8 +1,9 @@
 """Window for judicial vehicle valuation via comparative sales approach (SEC SK RF / Minyust RF)."""
 
 from datetime import datetime
+from pathlib import Path
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 from app.services.valuation.constants import (
@@ -19,8 +20,83 @@ from app.services.valuation.schemas import (
     ValuationReport,
     ValuationRequest,
 )
+from app.services.valuation.selector import AnalogSelector
 from app.services.valuation.service import ValuationService
 from views.db_records_window import DbRecordsWindow
+
+
+def _fmt_dec(value: float, digits: int = 4) -> str:
+    """Format decimal number with Russian decimal comma."""
+    return f"{value:.{digits}f}".replace(".", ",")
+
+
+def _fmt_money(value: float) -> str:
+    """Format rouble amount with thin-space thousands separator."""
+    return f"{round(value):,}".replace(",", " ")
+
+
+def _build_target_coefficient_rows(report: ValuationReport) -> list[tuple[str, str, str, str]]:
+    """Build per-coefficient breakdown rows for the target vehicle only.
+
+    Each row: (symbol, description, formula with substituted values, value).
+    """
+    t = report.target_vehicle
+    a = report.target_wear_coeff_a
+    b = report.target_wear_coeff_b
+    t_f = t.age_years
+    l_f = t.mileage_km / 1000.0
+    omega = report.target_omega
+    e = report.e_base
+    wear = report.target_wear_pct
+    moral = report.moral_wear_pct
+    moral_k = 1.0 - moral / 100.0
+    c_sr = report.weighted_mean_price
+    repair = report.repair_cost
+
+    if report.bargaining_discounts:
+        disc_str = " / ".join(f"{d * 100:.1f}%".replace(".", ",") for d in report.bargaining_discounts)
+        k_torg_str = " / ".join(_fmt_dec(1.0 - d, 3) for d in report.bargaining_discounts)
+    else:
+        disc_str = "—"
+        k_torg_str = "—"
+
+    return [
+        ("Кат.", "Категория ТС (Методика Минюста)", t.vehicle_category, ""),
+        ("Tф", "Фактический возраст, лет", "по документам", _fmt_dec(t_f, 2)),
+        ("Lф", "Фактический пробег, тыс. км", f"{_fmt_money(t.mileage_km)} км / 1000", _fmt_dec(l_f, 3)),
+        ("a", "Коэффициент влияния возраста", "норматив категории", _fmt_dec(a, 4)),
+        ("b", "Коэффициент влияния пробега", "норматив категории", _fmt_dec(b, 4)),
+        (
+            "Ω",
+            "Интенсивность эксплуатации",
+            f"a·Tф + b·Lф = {_fmt_dec(a, 4)}·{_fmt_dec(t_f, 2)} + {_fmt_dec(b, 4)}·{_fmt_dec(l_f, 3)}",
+            _fmt_dec(omega, 5),
+        ),
+        ("e", "Основание натурального логарифма", "по Методике", _fmt_dec(e, 2)),
+        (
+            "Иф",
+            "Физический износ, %",
+            f"100·(1 − e^−Ω) = 100·(1 − {_fmt_dec(e, 2)}^−{_fmt_dec(omega, 5)})",
+            _fmt_dec(wear, 2),
+        ),
+        ("Сторг", "Скидка на торг, %", "Живаев М.В., 2024", disc_str),
+        ("Кторг", "Коэффициент торга", "1 − Сторг", k_torg_str),
+        (
+            "Сср",
+            "Средневзвешенная стоимость, руб.",
+            "Σ (Cск_i · Кв_i) по аналогам",
+            _fmt_money(c_sr),
+        ),
+        ("Им", "Моральный износ, %", "Им1 + Им2 + Им3 + Им4", _fmt_dec(moral, 2)),
+        ("Км", "Коэффициент морального износа", "1 − Им / 100", _fmt_dec(moral_k, 4)),
+        ("Сэд", "Устранение дефектов, руб.", "Ср + Сзч + См", _fmt_money(repair)),
+        (
+            "Ств",
+            "РЫНОЧНАЯ СТОИМОСТЬ, руб.",
+            f"Сср·Км − Сэд = {_fmt_money(c_sr)}·{_fmt_dec(moral_k, 4)} − {_fmt_money(repair)}",
+            _fmt_money(report.market_value),
+        ),
+    ]
 
 
 class AnalogEditDialog:
@@ -181,12 +257,23 @@ class ValuationWindow:
         self.var_moral_wear = tk.StringVar(value="0")
         self.var_repair_cost = tk.StringVar(value="0")
 
+        # Database selection for market analogs: cars.db is default
+        default_db = AnalogSelector.get_default_db()
+        self.var_db_path = tk.StringVar(value=str(default_db))
+        self.var_auto_fallback = tk.BooleanVar(value=True)
+        status_name = (
+            "cars.db (12.1 млн записей)" if default_db.name == "cars.db" else default_db.name
+        )
+        self.var_analogs_db_status = tk.StringVar(
+            value=f"База аналогов: {status_name}"
+        )
+
         # Result summary vars
         self.res_market_value = tk.StringVar(value="—")
         self.res_variation = tk.StringVar(value="—")
         self.res_target_wear = tk.StringVar(value="—")
         self.res_status = tk.StringVar(
-            value="Заполните объект и добавьте минимум 3 аналога, затем нажмите 'Рассчитать'."
+            value="Нажмите 'Рассчитать' — аналоги будут подобраны из базы автоматически."
         )
         self.var_localization_hint = tk.StringVar(value="")
 
@@ -270,7 +357,7 @@ class ValuationWindow:
         # Lower frame: Calculation Results & 8-stage matrix
         bottom_group = ttk.LabelFrame(
             main_paned,
-            text=" 3. Экспертный расчет и согласование стоимости (8 этапов СЭЦ СК РФ) ",
+            text=" 3. Расчет стоимости объекта исследования (Методика Минюста РФ) ",
             padding=10,
         )
         main_paned.add(bottom_group, weight=4)
@@ -341,18 +428,30 @@ class ValuationWindow:
         btn_bar = ttk.Frame(parent)
         btn_bar.pack(fill="x", pady=(0, 6))
 
-        ttk.Button(btn_bar, text="➕ Добавить аналог", command=self._add_analog, width=18).pack(
-            side="left", padx=4
+        ttk.Button(
+            btn_bar,
+            text="🔍 Подобрать из БД",
+            command=self._manual_pick_analogs,
+            width=20,
+        ).pack(side="left", padx=3)
+        ttk.Button(btn_bar, text="➕ Добавить", command=self._add_analog, width=12).pack(
+            side="left", padx=3
         )
         ttk.Button(
-            btn_bar, text="✏️ Редактировать", command=self._edit_selected_analog, width=18
-        ).pack(side="left", padx=4)
-        ttk.Button(btn_bar, text="❌ Удалить", command=self._delete_selected_analog, width=14).pack(
-            side="left", padx=4
+            btn_bar, text="✏️ Изменить", command=self._edit_selected_analog, width=12
+        ).pack(side="left", padx=3)
+        ttk.Button(btn_bar, text="❌ Удалить", command=self._delete_selected_analog, width=11).pack(
+            side="left", padx=3
         )
+        ttk.Button(
+            btn_bar, text="📁 Сменить БД...", command=self._select_db_file, width=14
+        ).pack(side="right", padx=3)
+
+        table_frame = ttk.Frame(parent)
+        table_frame.pack(fill="both", expand=True)
 
         columns = ("name", "price", "age", "mileage", "discount", "deflator", "city")
-        self.analogs_tree = ttk.Treeview(parent, columns=columns, show="headings", height=6)
+        self.analogs_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=6)
         self.analogs_tree.heading("name", text="Описание")
         self.analogs_tree.heading("price", text="Цена оферты (₽)")
         self.analogs_tree.heading("age", text="Tф (лет)")
@@ -369,13 +468,23 @@ class ValuationWindow:
         self.analogs_tree.column("deflator", width=70, anchor="center")
         self.analogs_tree.column("city", width=100)
 
-        scroll_y = ttk.Scrollbar(parent, orient="vertical", command=self.analogs_tree.yview)
+        scroll_y = ttk.Scrollbar(table_frame, orient="vertical", command=self.analogs_tree.yview)
         self.analogs_tree.configure(yscrollcommand=scroll_y.set)
 
         self.analogs_tree.pack(side="left", fill="both", expand=True)
         scroll_y.pack(side="right", fill="y")
 
         self.analogs_tree.bind("<Double-1>", lambda _e: self._edit_selected_analog())
+
+        # Status row at bottom of analogs frame
+        status_row = ttk.Frame(parent)
+        status_row.pack(fill="x", pady=(4, 0))
+        ttk.Label(
+            status_row,
+            textvariable=self.var_analogs_db_status,
+            font=("Segoe UI", 8),
+            foreground="#555",
+        ).pack(side="left")
 
     def _build_results_view(self, parent: ttk.LabelFrame) -> None:
         top_summary = ttk.Frame(parent)
@@ -427,57 +536,36 @@ class ValuationWindow:
             width=30,
         ).pack(side="right", padx=6, pady=4)
 
-        # 8-step matrix treeview
-        columns = (
-            "idx",
-            "c_orig",
-            "wear_an",
-            "k_wear",
-            "c1",
-            "disc",
-            "c2",
-            "k_priv",
-            "c_skorr",
-            "r",
-            "delta",
-            "d",
-            "k_v",
-            "c_weighted",
+        # Target vehicle coefficient breakdown (analogs are not itemized here)
+        coeff_group = ttk.LabelFrame(
+            parent,
+            text=" Коэффициенты объекта исследования ",
+            padding=6,
         )
+        coeff_group.pack(side="top", fill="both", expand=True)
 
-        self.matrix_tree = ttk.Treeview(parent, columns=columns, show="headings", height=7)
+        columns = ("symbol", "name", "formula", "value")
+        self.coeff_tree = ttk.Treeview(coeff_group, columns=columns, show="headings", height=10)
         headers = {
-            "idx": "№",
-            "c_orig": "Цена исх (₽)",
-            "wear_an": "Износ Иф",
-            "k_wear": "К_износ",
-            "c1": "Цена C1 (₽)",
-            "disc": "Скидка торг",
-            "c2": "Цена C2 (₽)",
-            "k_priv": "К_прив",
-            "c_skorr": "Скорр. Cск (₽)",
-            "r": "r_i",
-            "delta": "Δ_i",
-            "d": "d_i",
-            "k_v": "Вес Квi",
-            "c_weighted": "Взвеш. цена (₽)",
+            "symbol": ("Обозн.", 70, "center"),
+            "name": ("Показатель", 260, "w"),
+            "formula": ("Формула / подстановка", 460, "w"),
+            "value": ("Значение", 150, "e"),
         }
-        for col, title in headers.items():
-            self.matrix_tree.heading(col, text=title)
-            w = 50 if col == "idx" else 75
-            if col in ("c_orig", "c1", "c2", "c_skorr", "c_weighted"):
-                w = 95
-            self.matrix_tree.column(col, width=w, anchor="e" if "₽" in title or col == "idx" else "center")
+        for col, (title, width, anchor) in headers.items():
+            self.coeff_tree.heading(col, text=title)
+            self.coeff_tree.column(col, width=width, anchor=anchor, stretch=col == "formula")
 
-        scroll_m_y = ttk.Scrollbar(parent, orient="vertical", command=self.matrix_tree.yview)
-        scroll_m_x = ttk.Scrollbar(parent, orient="horizontal", command=self.matrix_tree.xview)
-        self.matrix_tree.configure(
-            yscrollcommand=scroll_m_y.set, xscrollcommand=scroll_m_x.set
+        self.coeff_tree.tag_configure("odd", background="#f7f9fc")
+        self.coeff_tree.tag_configure("key", background="#e8f1ff", font=("Segoe UI", 9, "bold"))
+        self.coeff_tree.tag_configure(
+            "total", background="#d4edda", foreground="#155724", font=("Segoe UI", 10, "bold")
         )
 
-        self.matrix_tree.pack(side="top", fill="both", expand=True)
-        scroll_m_y.pack(side="right", fill="y")
-        scroll_m_x.pack(side="bottom", fill="x")
+        scroll_c_y = ttk.Scrollbar(coeff_group, orient="vertical", command=self.coeff_tree.yview)
+        self.coeff_tree.configure(yscrollcommand=scroll_c_y.set)
+        self.coeff_tree.pack(side="left", fill="both", expand=True)
+        scroll_c_y.pack(side="right", fill="y")
 
     def _add_analog(self) -> None:
         def on_save(data: dict[str, Any]) -> None:
@@ -526,15 +614,147 @@ class ValuationWindow:
             )
             self.analogs_tree.insert("", "end", iid=str(i), values=vals)
 
+    def _manual_pick_analogs(self) -> None:
+        """Trigger analog picking manually from button."""
+        self._auto_pick_analogs(silent=False)
+
+    def _select_db_file(self) -> None:
+        """Select database file for analogs lookup."""
+        path = filedialog.askopenfilename(
+            title="Выберите файл базы аналогов",
+            filetypes=[
+                ("Базы SQLite", "*.db *.sqlite *.sqlite3"),
+                ("Все файлы", "*.*"),
+            ],
+        )
+        if path:
+            self.var_db_path.set(path)
+            self.var_analogs_db_status.set(f"База данных: {Path(path).name}")
+            self._auto_pick_analogs(silent=False)
+
+    def _auto_pick_analogs(self, silent: bool = False) -> bool:
+        """Automatically find analogs from active database (sales.db/cars.db)."""
+        brand = self.var_brand.get().strip()
+        model = self.var_model.get().strip()
+        if not brand and not model:
+            if not silent:
+                messagebox.showwarning(
+                    "Поиск аналогов", "Укажите марку или модель автомобиля для подбора."
+                )
+            return False
+
+        year_val: int | None = None
+        try:
+            year_val = int(self.var_year.get().strip())
+        except ValueError:
+            pass
+
+        target_age_val: float | None = None
+        try:
+            target_age_val = float(self.var_age.get().strip().replace(",", "."))
+        except ValueError:
+            pass
+
+        target_mileage_val: float | None = None
+        try:
+            target_mileage_val = float(
+                self.var_mileage.get().strip().replace(" ", "").replace(",", ".")
+            )
+        except ValueError:
+            pass
+
+        val_date = self.var_date.get().strip() or None
+        db_path = Path(self.var_db_path.get().strip())
+        if not db_path.exists():
+            db_path = AnalogSelector.get_default_db()
+
+        analogs = AnalogSelector.find_analogs(
+            mark=brand,
+            model=model,
+            year=year_val,
+            valuation_date=val_date,
+            target_age=target_age_val,
+            target_mileage=target_mileage_val,
+            db_path=db_path,
+            limit=10,
+            min_required=3,
+            allow_fallback=self.var_auto_fallback.get(),
+        )
+
+        if analogs:
+            self.analogs_list = analogs
+            self._refresh_analogs_table()
+            source_name = analogs[0].get("db_source", db_path.name)
+            self.var_analogs_db_status.set(
+                f"База: {source_name} (загружено аналогов: {len(analogs)})"
+            )
+            if not silent:
+                messagebox.showinfo(
+                    "Подбор аналогов",
+                    f"Найдено и загружено {len(analogs)} аналогов из базы '{source_name}'.",
+                )
+            return True
+        else:
+            self.var_analogs_db_status.set(
+                f"База: {db_path.name} (аналоги для '{brand} {model}' не найдены)"
+            )
+            if not silent:
+                self._show_no_analogs_dialog(brand, model)
+            return False
+
+    def _show_no_analogs_dialog(self, brand: str, model: str) -> None:
+        """Display helpful guidance when fewer than 3 analogs are found in DB."""
+        db_name = Path(self.var_db_path.get()).name
+        cars_db_available = AnalogSelector.FULL_CARS_DB.exists()
+        current_count = len(self.analogs_list)
+
+        msg = (
+            f"В базе данных '{db_name}' найдено {current_count} аналогов для '{brand} {model}'.\n"
+            "По методике СЭЦ СК РФ и Минюста РФ требуется минимум 3 аналога.\n\n"
+        )
+        if db_name == "sales.db":
+            msg += (
+                "ℹ️ Файл 'sales.db' содержит 6 тестовых записей (Aston Martin DB9/DBS).\n\n"
+            )
+
+        if cars_db_available and db_name != "cars.db":
+            msg += (
+                "Найдена полная база 'cars.db' (12.1 млн записей).\n"
+                "Переключить поиск на полную базу cars.db?"
+            )
+            ans = messagebox.askyesno("Подбор аналогов", msg)
+            if ans:
+                self.var_db_path.set(str(AnalogSelector.FULL_CARS_DB))
+                self.var_analogs_db_status.set("База данных: cars.db (12.1 млн записей)")
+                if self._auto_pick_analogs(silent=False):
+                    self.calculate_valuation()
+        else:
+            msg += (
+                "Что можно сделать:\n"
+                "1. Нажмите '📁 Сменить БД...', чтобы выбрать другой файл базы данных.\n"
+                "2. Нажмите '⭐ Эталон' для загрузки эталонных данных судебной практики.\n"
+                "3. Добавьте аналоги вручную кнопкой '➕ Добавить'."
+            )
+            messagebox.showwarning("Недостаточно аналогов", msg)
+
     def calculate_valuation(self) -> None:
         """Run complete 8-stage valuation pipeline."""
-        if len(self.analogs_list) < 3:
-            messagebox.showwarning(
-                "Недостаточно аналогов",
-                f"По методике СЭЦ СК РФ требуется минимум 3 аналога (сейчас: {len(self.analogs_list)}).\n"
-                "Добавьте аналоги вручную или загрузите эталон.",
+        brand = self.var_brand.get().strip()
+        model = self.var_model.get().strip()
+
+        # Check if loaded analogs mismatch the current vehicle
+        mismatch = False
+        if self.analogs_list and brand:
+            mismatch = not any(
+                brand.lower() in str(an.get("name", "")).lower() for an in self.analogs_list
             )
-            return
+
+        if len(self.analogs_list) < 3 or mismatch:
+            # Auto-attempt retrieval from database
+            self._auto_pick_analogs(silent=True)
+            if len(self.analogs_list) < 3:
+                self._show_no_analogs_dialog(brand, model)
+                return
 
         try:
             year = int(self.var_year.get().strip())
@@ -596,28 +816,21 @@ class ValuationWindow:
             f"Иф = {report.target_wear_pct:.2f}% (Ω = {report.target_omega:.5f})"
         )
 
-        # Clear and fill 8-step matrix
-        for item in self.matrix_tree.get_children():
-            self.matrix_tree.delete(item)
+        # Clear and fill target coefficient breakdown
+        for item in self.coeff_tree.get_children():
+            self.coeff_tree.delete(item)
 
-        for i, res in enumerate(report.analog_results, 1):
-            row_vals = (
-                str(i),
-                f"{int(res.original_price):,}".replace(",", " "),
-                f"{res.wear_pct:.2f}%",
-                f"{res.k_wear:.4f}",
-                f"{int(round(res.price_after_wear)):,}".replace(",", " "),
-                f"-{res.bargaining_discount * 100:.1f}%",
-                f"{int(round(res.price_after_bargaining)):,}".replace(",", " "),
-                f"{res.deflator:.4f}",
-                f"{int(round(res.adjusted_price)):,}".replace(",", " "),
-                f"{res.scale_ratio:.4f}",
-                f"{res.abs_delta:.4f}",
-                f"{res.relative_share_d:.4f}",
-                f"{res.weight:.4f}",
-                f"{int(round(res.weighted_price)):,}".replace(",", " "),
-            )
-            self.matrix_tree.insert("", "end", values=row_vals)
+        key_symbols = {"Ω", "Иф", "Сср"}
+        for i, (symbol, name, formula, value) in enumerate(
+            _build_target_coefficient_rows(report)
+        ):
+            if symbol == "Ств":
+                tag = "total"
+            elif symbol in key_symbols:
+                tag = "key"
+            else:
+                tag = "odd" if i % 2 else ""
+            self.coeff_tree.insert("", "end", values=(symbol, name, formula, value), tags=(tag,))
 
     def _show_text_report(self) -> None:
         if not self.last_report:
@@ -644,31 +857,22 @@ class ValuationWindow:
             f"   Коэффициент вариации v = {rep.variation_analysis.variation_coefficient:.4f} ({rep.variation_analysis.variation_coefficient*100:.2f}%)",
             f"   Критерий: v <= 0.30 -> {'Совокупность ОДНОРОДНА, выборка валидна' if rep.variation_analysis.is_homogeneous else 'Выборка неоднородна'}",
             "-" * 78,
-            "2. ФИЗИЧЕСКИЙ ИЗНОС ОБЪЕКТА (Этап 3):",
-            f"   Интенсивность эксплуатации Omega = {rep.target_omega:.5f}",
-            f"   Физический износ Иф = {rep.target_wear_pct:.2f}%",
-            "-" * 78,
-            "3. ТАБЛИЦА СКОРРЕКТИРОВАННЫХ ЦЕН И ВЕСОВЫХ КОЭФФИЦИЕНТОВ:",
+            "2. КОЭФФИЦИЕНТЫ ОБЪЕКТА ИССЛЕДОВАНИЯ:",
         ]
 
-        for i, a in enumerate(rep.analog_results, 1):
-            text.extend([
-                f"   Аналог № {i} ({a.analog_id}):",
-                f"     - Исходная цена оферты: {int(a.original_price):,} руб.",
-                f"     - Износ аналога: {a.wear_pct:.2f}% | К_износ = {a.k_wear:.4f} -> C1 = {int(round(a.price_after_wear)):,} руб.",
-                f"     - Скидка на торг: -{a.bargaining_discount*100:.1f}% -> C2 = {int(round(a.price_after_bargaining)):,} руб.",
-                f"     - Дефлятор цен: К_прив = {a.deflator:.4f} -> C_скорр = {int(round(a.adjusted_price)):,} руб.",
-                f"     - Отклонение: r_i = {a.scale_ratio:.4f}, Delta_i = {a.abs_delta:.4f}, Доля d_i = {a.relative_share_d:.4f}",
-                f"     - Весовой коэффициент: К_в{i} = {a.weight:.4f}",
-                f"     - Взвешенная стоимость: {int(round(a.weighted_price)):,} руб.",
-            ])
+        for symbol, name, formula, value in _build_target_coefficient_rows(rep):
+            if symbol == "Ств":
+                continue
+            line = f"   {symbol:<6} {name}"
+            if formula:
+                line += f": {formula}"
+            if value:
+                line += f" = {value}"
+            text.append(line)
 
         text.extend([
-            "-" * 78,
-            f"Сумма весовых коэффициентов: {rep.sum_weights:.4f} (контроль = 1.0000)",
-            f"Моральный износ: {rep.moral_wear_pct:.1f}% | Затраты на ремонт: {int(rep.repair_cost):,} руб.",
             "=" * 78,
-            f"ИТОГОВАЯ РЫНОЧНАЯ СТОИМОСТЬ: {rep.market_value:,} РУБЛЕЙ.".replace(",", " "),
+            f"ИТОГОВАЯ РЫНОЧНАЯ СТОИМОСТЬ: {_fmt_money(rep.market_value)} РУБЛЕЙ.",
             "=" * 78,
         ])
 
@@ -841,8 +1045,8 @@ class ValuationWindow:
         self.var_repair_cost.set("0")
         self.analogs_list.clear()
         self._refresh_analogs_table()
-        for item in self.matrix_tree.get_children():
-            self.matrix_tree.delete(item)
+        for item in self.coeff_tree.get_children():
+            self.coeff_tree.delete(item)
         self.res_market_value.set("—")
         self.res_variation.set("—")
         self.res_target_wear.set("—")

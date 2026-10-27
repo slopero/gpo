@@ -65,6 +65,16 @@ def calculate_variation_coefficient(prices: list[float]) -> VariationResult:
     return VariationResult(variation_coefficient=v, std_dev=std_dev, is_homogeneous=is_homogeneous)
 
 
+def resolve_wear_coefficients(vehicle_category: str) -> tuple[float, float]:
+    """Return normative (a, b) coefficients of Omega = a * T + b * L for a vehicle category."""
+    coeff_pair = WEAR_COEFFICIENTS.get(vehicle_category)
+    if coeff_pair is None:
+        coeff_pair = WEAR_COEFFICIENTS.get(vehicle_category.strip().upper())
+    if coeff_pair is None:
+        raise ValueError(f"Unknown vehicle category for wear coefficients: '{vehicle_category}'")
+    return coeff_pair
+
+
 def calculate_physical_wear(
     age_years: float,
     mileage_km: float,
@@ -85,15 +95,7 @@ def calculate_physical_wear(
     if mileage_km < 0.0:
         raise ValueError("Vehicle mileage cannot be negative")
 
-    coeff_pair = WEAR_COEFFICIENTS.get(vehicle_category)
-    if coeff_pair is None:
-        normalized_cat = vehicle_category.strip().upper()
-        coeff_pair = WEAR_COEFFICIENTS.get(normalized_cat)
-
-    if coeff_pair is None:
-        raise ValueError(f"Unknown vehicle category for wear coefficients: '{vehicle_category}'")
-
-    a, b = coeff_pair
+    a, b = resolve_wear_coefficients(vehicle_category)
     mileage_thousand: Final[float] = mileage_km / 1000.0
     omega: Final[float] = a * age_years + b * mileage_thousand
     wear_pct: Final[float] = 100.0 * (1.0 - (E_BASE ** (-omega)))
@@ -191,11 +193,13 @@ def calculate_final_market_value(
 ) -> int:
     """Calculate final rounded market value taking into account moral wear and repairs.
 
-    Formula:
-        raw_value = sum(weighted_prices) * (1.0 - moral_wear_pct / 100.0) + repair_cost
+    Formula (Minyust RF methodology, comparative approach):
+        raw_value = sum(weighted_prices) * (1.0 - moral_wear_pct / 100.0) - repair_cost
         market_value = round(raw_value)
+
+    The cost of eliminating defects (C_ed) reduces the value of the vehicle.
     """
     raw_value: Final[float] = (
-        sum(weighted_prices) * (1.0 - moral_wear_pct / 100.0) + repair_cost
+        sum(weighted_prices) * (1.0 - moral_wear_pct / 100.0) - repair_cost
     )
     return round(raw_value)

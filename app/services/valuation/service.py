@@ -2,7 +2,7 @@
 
 from typing import Final
 
-from app.services.valuation.constants import BARGAINING_DISCOUNTS
+from app.services.valuation.constants import BARGAINING_DISCOUNTS, E_BASE
 from app.services.valuation.engine import (
     calculate_analog_weights,
     calculate_bargaining_adjustment,
@@ -12,6 +12,7 @@ from app.services.valuation.engine import (
     calculate_sample_mean,
     calculate_variation_coefficient,
     calculate_wear_adjustment,
+    resolve_wear_coefficients,
 )
 from app.services.valuation.schemas import (
     AnalogAdjustmentResult,
@@ -179,10 +180,18 @@ class ValuationService:
         if target.valuation_date is not None:
             val_date_str = str(target.valuation_date)
 
+        coeff_a, coeff_b = resolve_wear_coefficients(target.vehicle_category)
+        applied_discounts = sorted({float(pre["bargaining_discount"]) for pre in analog_pre_results})
+
         return ValuationReport(
             target_vehicle=target,
             target_omega=target_wear.omega,
             target_wear_pct=target_wear.wear_pct,
+            target_wear_coeff_a=coeff_a,
+            target_wear_coeff_b=coeff_b,
+            e_base=E_BASE,
+            bargaining_discounts=applied_discounts,
+            weighted_mean_price=sum(weighted_prices),
             variation_analysis=variation_analysis,
             analog_results=analog_results,
             sum_weights=sum(weights),

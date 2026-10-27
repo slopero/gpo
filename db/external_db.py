@@ -107,15 +107,24 @@ class ExternalDB:
             'model': ['модель', 'model', 'модель_авто'],
             'mark_model': ['название_машины', 'name', 'марка_модель', 'full_name', 'автомобиль'],
             'year': ['год', 'year', 'год_выпуска', 'year_of_manufacture'],
-            'ad_date': ['дата_размещения_объявления', 'date', 'дата', 'ad_date', 'publication_date'],
-            'region': ['регион', 'region', 'город', 'city', 'location'],
+            'ad_date': [
+                'дата_размещения_объявления',
+                'дата_объявления',
+                'date',
+                'дата',
+                'ad_date',
+                'publication_date',
+            ],
+            'region': ['регион', 'region', 'location'],
+            'city': ['город', 'city'],
+            'mileage': ['пробег', 'mileage', 'km', 'пробег_км', 'count_kilometers'],
             'power': ['мощность', 'power', 'лс', 'horsepower', 'hp'],
             'volume': ['объем_двигателя', 'volume', 'объем', 'engine_volume', 'displacement'],
             'engine': ['тип_двигателя', 'engine_type', 'топливо', 'fuel', 'engine'],
             'transmission': ['коробка_передач', 'transmission', 'кпп', 'gear', 'gearbox', 'transmission_type'],
             'body_type': ['тип_кузова', 'body_type', 'кузов', 'body'],
             'type_ts': ['тип_техники', 'категория_тс', 'type_ts', 'vehicle_type', 'category'],
-            'price': ['цена', 'price', 'стоимость', 'cost', 'price_rub']
+            'price': ['цена', 'price', 'стоимость', 'cost', 'price_rub'],
         }
         
         col_lower = {col.lower(): col for col in self.all_columns}
@@ -153,13 +162,15 @@ class ExternalDB:
                 
                 if mark and model:
                     full_name = f"{mark} {model}"
-                    conditions.append(f"LOWER(\"{col}\") = LOWER(?) OR (LOWER(\"{col}\") LIKE ? AND LOWER(\"{col}\") LIKE ?)")
+                    conditions.append(
+                        f'(LOWER("{col}") = LOWER(?) OR (LOWER("{col}") LIKE ? AND LOWER("{col}") LIKE ?))'
+                    )
                     params.extend([full_name, f"%{mark.lower()}%", f"%{model.lower()}%"])
                 elif mark:
-                    conditions.append(f"LOWER(\"{col}\") LIKE ?")
+                    conditions.append(f'LOWER("{col}") LIKE ?')
                     params.append(f"%{mark.lower()}%")
                 elif model:
-                    conditions.append(f"LOWER(\"{col}\") LIKE ?")
+                    conditions.append(f'LOWER("{col}") LIKE ?')
                     params.append(f"%{model.lower()}%")
         
         # 2. Год выпуска

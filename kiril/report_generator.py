@@ -13,6 +13,8 @@ from typing import Optional
 from pypdf import PdfReader
 import requests
 
+from app.paths import is_frozen, resource_path, user_data_dir
+
 
 @dataclass
 class PdfMetrics:
@@ -37,10 +39,11 @@ class AutoSalesStats:
 
 
 class ReportGenerator:
-    BASE_DIR = Path(__file__).resolve().parent
+    BASE_DIR = resource_path("kiril")
     INFO_DIR = BASE_DIR / "info"
     AEB_INDEX_PATH = BASE_DIR / "aeb_rus_sales_data" / "aeb_rus_sales_index.json"
-    AUTO_SALES_CACHE_PATH = INFO_DIR / "auto_sales_cache.json"
+    # Кэш пишется в пользовательскую папку: в exe-сборке BASE_DIR — временная read-only распаковка.
+    AUTO_SALES_CACHE_PATH = (user_data_dir() if is_frozen() else INFO_DIR) / "auto_sales_cache.json"
     AUTO_SALES_URL_TEMPLATE = "https://auto.vercity.ru/statistics/sales/europe/{year}/russia/{month:02d}-{month:02d}/"
     AUTO_SALES_HEADERS = {
         "User-Agent": (
@@ -108,18 +111,31 @@ class ReportGenerator:
 
     @classmethod
     def _scan_periods(cls) -> list[tuple[int, int, Path]]:
-        if not cls.INFO_DIR.exists():
-            return []
-
         periods: list[tuple[int, int, Path]] = []
-        for pdf_path in cls.INFO_DIR.glob("*.pdf"):
-            match = cls.PDF_NAME_RE.match(pdf_path.name)
-            if not match:
-                continue
-            month = int(match.group("month"))
-            year = int(match.group("year"))
-            if 1 <= month <= 12:
-                periods.append((year, month, pdf_path))
+        if cls.INFO_DIR.exists():
+            for pdf_path in cls.INFO_DIR.glob("*.pdf"):
+                match = cls.PDF_NAME_RE.match(pdf_path.name)
+                if not match:
+                    continue
+                month = int(match.group("month"))
+                year = int(match.group("year"))
+                if 1 <= month <= 12:
+                    periods.append((year, month, pdf_path))
+
+        if not periods:
+            reports_dir = cls.BASE_DIR / "reports"
+            if reports_dir.exists():
+                report_re = re.compile(
+                    r"^report_(?P<year>\d{4})_(?P<month>\d{2})\.txt$", re.IGNORECASE
+                )
+                for txt_path in reports_dir.glob("report_*.txt"):
+                    match = report_re.match(txt_path.name)
+                    if not match:
+                        continue
+                    month = int(match.group("month"))
+                    year = int(match.group("year"))
+                    if 1 <= month <= 12:
+                        periods.append((year, month, txt_path))
 
         periods.sort(key=lambda item: (item[0], item[1]))
         return periods

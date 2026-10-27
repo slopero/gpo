@@ -133,6 +133,17 @@ class ValuationReport(BaseModel):
     target_vehicle: TargetVehicleInput = Field(..., description="Target vehicle data")
     target_omega: float = Field(..., description="Target operating intensity Omega")
     target_wear_pct: float = Field(..., description="Target physical wear percentage")
+    target_wear_coeff_a: float = Field(..., description="Normative age coefficient a")
+    target_wear_coeff_b: float = Field(..., description="Normative mileage coefficient b")
+    e_base: float = Field(..., description="Base of natural logarithm used in methodology")
+    bargaining_discounts: list[float] = Field(
+        ...,
+        description="Distinct bargaining discount rates applied to analog offers",
+    )
+    weighted_mean_price: float = Field(
+        ...,
+        description="Weighted mean price before moral wear and repairs (C_sr)",
+    )
     variation_analysis: VariationAnalysis = Field(..., description="Statistical homogeneity check")
     analog_results: list[AnalogAdjustmentResult] = Field(
         ...,

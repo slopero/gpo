@@ -1,6 +1,7 @@
 """Unit and benchmark tests for vehicle valuation module (Case No. 4440/25e)."""
 
 import math
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -21,6 +22,7 @@ from app.services.valuation.schemas import (
     TargetVehicleInput,
     ValuationRequest,
 )
+from app.services.valuation.selector import AnalogSelector
 from app.services.valuation.service import ValuationService
 
 
@@ -298,7 +300,7 @@ def test_engine_pure_functions() -> None:
     """Test auxiliary pure engine functions."""
     assert calculate_wear_adjustment(30.0, 20.0) == (70.0 / 80.0)
     assert calculate_bargaining_adjustment(1_000_000.0, 0.05) == 950_000.0
-    assert calculate_final_market_value([1_000_000.0], moral_wear_pct=10.0, repair_cost=50_000.0) == 950_000
+    assert calculate_final_market_value([1_000_000.0], moral_wear_pct=10.0, repair_cost=50_000.0) == 850_000
 
 
 def test_real_market_lada_vesta_2023() -> None:
@@ -341,7 +343,7 @@ def test_real_market_toyota_camry_2021() -> None:
     report = ValuationService().evaluate(ValuationRequest(target=target, analogs=analogs))
     assert report.variation_analysis.is_homogeneous is True
     assert math.isclose(report.target_wear_pct, 22.5208, abs_tol=0.01)
-    assert report.market_value == 3_288_726
+    assert report.market_value == 3_238_726
 
 
 def test_real_market_haval_jolion_2022() -> None:
@@ -363,4 +365,68 @@ def test_real_market_haval_jolion_2022() -> None:
     report = ValuationService().evaluate(ValuationRequest(target=target, analogs=analogs))
     assert report.variation_analysis.is_homogeneous is True
     assert math.isclose(report.target_wear_pct, 24.7067, abs_tol=0.01)
-    assert report.market_value == 1_787_835
+    assert report.market_value == 1_757_835
+
+
+def test_analog_selector_sales_db_auto_valuation() -> None:
+    """Test automated retrieval of Aston Martin DB9 from sales.db and full valuation."""
+    db_file = Path("db/sales.db")
+    if not db_file.exists():
+        pytest.skip("db/sales.db not found")
+
+    analogs_raw = AnalogSelector.find_analogs(
+        mark="Aston Martin",
+        model="DB9",
+        year=2005,
+        db_path=db_file,
+        allow_fallback=False,
+    )
+    assert len(analogs_raw) >= 3
+
+    target = TargetVehicleInput(
+        brand="Aston Martin",
+        model="DB9",
+        year=2005,
+        age_years=10.0,
+        mileage_km=30_000.0,
+        vehicle_category=VehicleWearCategory.EUROPEAN_PASSENGER.value,
+    )
+    analogs = [
+        AnalogVehicleInput(
+            name=a["name"],
+            price=float(a["price"]),
+            age_years=float(a["age_years"]),
+            mileage_km=float(a["mileage_km"]),
+            deflator=float(a.get("deflator", 1.0)),
+        )
+        for a in analogs_raw
+    ]
+    report = ValuationService().evaluate(ValuationRequest(target=target, analogs=analogs))
+    assert report.market_value > 0
+    assert report.variation_analysis.is_homogeneous is True
+    assert len(report.analog_results) >= 3
+
+
+def test_analog_selector_cars_db_fallback() -> None:
+    """Test automated search fallback from sales.db to cars.db."""
+    cars_file = Path("db/cars.db")
+    if not cars_file.exists():
+        pytest.skip("db/cars.db not found")
+
+    analogs_solaris = AnalogSelector.find_analogs(
+        mark="Hyundai",
+        model="Solaris",
+        year=2011,
+        db_path=Path("db/sales.db"),
+        allow_fallback=True,
+    )
+    assert len(analogs_solaris) >= 3
+    assert analogs_solaris[0]["db_source"] == "cars.db"
+    assert "Solaris" in analogs_solaris[0]["name"]
+
+
+def test_analog_selector_empty_params() -> None:
+    """Test AnalogSelector handles empty mark/model gracefully."""
+    res = AnalogSelector.find_analogs(mark="", model="", year=2020)
+    assert res == []
+

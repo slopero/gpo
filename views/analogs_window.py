@@ -6,9 +6,10 @@ from typing import List, Dict
 class AnalogsWindow:
     """Окно для отображения найденных аналогов"""
     
-    def __init__(self, parent, analogs: List[Dict]):
+    def __init__(self, parent, analogs: List[Dict], target_data: Dict[str, Any] | None = None):
         self.parent = parent
         self.analogs = analogs
+        self.target_data = target_data
         
         self.window = tk.Toplevel(parent)
         self.window.title("Найденные аналоги")
@@ -45,7 +46,7 @@ class AnalogsWindow:
     def _open_valuation(self):
         from datetime import datetime
         from views.valuation_window import ValuationWindow
-        val_win = ValuationWindow(self.window)
+        val_win = ValuationWindow(self.window, initial_data=self.target_data)
         analogs = []
         for an in self.analogs:
             try:
@@ -65,6 +66,8 @@ class AnalogsWindow:
         if analogs:
             val_win.analogs_list = analogs
             val_win._refresh_analogs_table()
+            if len(analogs) >= 3:
+                val_win.calculate_valuation()
     
     def _center_window(self):
         """Центрирует окно на экране"""

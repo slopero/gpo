@@ -98,6 +98,7 @@ class FormController:
     
     def find_similar_vehicles(self, record_id: int, progress_callback=None) -> list:
         """Поиск аналогов для записи с указанным ID"""
+        from app.paths import cars_db_path
         from db.external_db import ExternalDB
         
         if progress_callback:
@@ -110,7 +111,11 @@ class FormController:
         if progress_callback:
             progress_callback("Подключение к базе данных...", 30)
         
-        external_db = ExternalDB(progress_callback=progress_callback)
+        default_db = cars_db_path()
+        external_db = ExternalDB(
+            db_path=default_db if default_db.exists() else None,
+            progress_callback=progress_callback,
+        )
         
         if external_db.data is None and external_db.conn is None:
             if progress_callback:
