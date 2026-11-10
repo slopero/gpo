@@ -47,6 +47,14 @@ class ValuationService:
         target: TargetVehicleInput = request.target
         analogs: list[AnalogVehicleInput] = request.analogs
 
+        # Страна-производитель: VIN приоритетнее марки (дело 4440/25э).
+        # Участвует в расчёте транзитивно: страна -> категория Минюста -> коэф. a и b.
+        from db.country_lookup import car_origin
+
+        country, _matched_brand, country_source = car_origin(
+            vin=target.vin or "", brand=target.brand or ""
+        )
+
         # Stage 1 & 2: Homogeneity verification of initial analog prices
         prices: list[float] = [a.price for a in analogs]
         mean_price = calculate_sample_mean(prices)
@@ -199,6 +207,8 @@ class ValuationService:
             repair_cost=target.repair_cost,
             market_value=market_value,
             valuation_date=val_date_str,
+            target_country=country,
+            target_country_source=country_source,
         )
 
     def evaluate_dict(self, data: dict[str, object]) -> ValuationReport:

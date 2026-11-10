@@ -57,6 +57,7 @@ class FormController:
         return {
             "mark": payload_check["mark"],
             "model": payload_check["model"],
+            "vin": self._to_str_or_none(self._get_clean_value(data, "vin")),
             "type_ts": payload_check["type_ts"],
             "year_ts": self._to_int(payload_check["year_ts"]),
             "region": payload_check["region"],

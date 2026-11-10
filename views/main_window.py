@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from views.clipboard_fix import install_paste_fix
 from views.db_records_window import DbRecordsWindow
 from views.result_window import ResultWindow
 
@@ -10,6 +11,7 @@ class MainWindow:
     FIELD_CONFIG = [
         ("Марка", "mark", None),
         ("Модель", "model", None),
+        ("VIN-номер", "vin", None),
         ("Тип ТС", "type_ts", ["Автомобили", "Спецтехника"]),
         ("Год выпуска ТС", "year_ts", None),
         ("Регион сделки", "region", None),
@@ -30,11 +32,12 @@ class MainWindow:
         self.controller = controller
         self.root = tk.Tk()
         self.root.title("Форма для заполнения данных")
-        self.root.geometry("560x640")
+        self.root.geometry("560x680")
 
         self.field_vars = {}
         self.field_labels = {}
         self._build_form()
+        install_paste_fix(self.root)
 
     # Построение формы на основе FIELD_CONFIG
     def _build_form(self):

@@ -121,6 +121,11 @@ def detect_vehicle_category(
 ) -> str:
     """Automatically detect normative vehicle wear category by manufacturer brand, VIN prefix, and type.
 
+    Страна-производитель (соглашение по делу 4440/25э):
+    1) есть VIN — страна сборки по vin_country (WMI приоритетнее 2-симв. диапазона);
+    2) VIN нет — страна компании по brand_country;
+    3) страна -> категория Минюста; нет совпадения -> запасные списки марок ниже.
+
     Returns:
         Russian category name key for WEAR_COEFFICIENTS.
     """
@@ -142,7 +147,15 @@ def detect_vehicle_category(
             return "Грузовые бортовые автомобили отечественные"
         return "Грузовые автомобили зарубежного производства"
 
-    # 2. Check brand manufacturer
+    # 2. Страна-производитель из БД: вин приоритетнее марки (договорённость 4440/25э).
+    from db.country_lookup import car_origin, category_from_country
+
+    country, _matched, _source = car_origin(vin=clean_vin, brand=clean_brand)
+    db_category = category_from_country(country)
+    if db_category is not None:
+        return db_category
+
+    # 3. Check brand manufacturer (запасной путь — если страна не найдена в БД)
     domestic_brands = {
         "lada", "лада", "ваз", "vaz", "газ", "gaz", "уаз", "uaz",
         "москвич", "moskvich", "moskvitch", "тагаз", "tagaz", "иж", "izh",
@@ -194,7 +207,7 @@ def detect_vehicle_category(
     if clean_brand in american_brands:
         return "Легковые автомобили американского производства"
 
-    # 3. Check VIN WMI prefix
+    # 4. Check VIN WMI prefix (последний запасной путь, без БД)
     if clean_vin:
         c = clean_vin[0]
         if c == "J":

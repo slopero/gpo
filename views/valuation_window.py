@@ -35,6 +35,20 @@ def _fmt_money(value: float) -> str:
     return f"{round(value):,}".replace(",", " ")
 
 
+def _country_formula(report: ValuationReport) -> str:
+    """Коротко, откуда взята страна."""
+    source = report.target_country_source or ""
+    if source == "vin":
+        return f"по VIN {(report.target_vehicle.vin or '—')[:3]}"
+    if source == "brand":
+        return "по марке"
+    return "не определена"
+
+
+def _country_value(report: ValuationReport) -> str:
+    return report.target_country or "—"
+
+
 def _build_target_coefficient_rows(report: ValuationReport) -> list[tuple[str, str, str, str]]:
     """Build per-coefficient breakdown rows for the target vehicle only.
 
@@ -62,6 +76,12 @@ def _build_target_coefficient_rows(report: ValuationReport) -> list[tuple[str, s
 
     return [
         ("Кат.", "Категория ТС (Методика Минюста)", t.vehicle_category, ""),
+        (
+            "Страна",
+            "Страна-производитель",
+            _country_formula(report),
+            _country_value(report),
+        ),
         ("Tф", "Фактический возраст, лет", "по документам", _fmt_dec(t_f, 2)),
         ("Lф", "Фактический пробег, тыс. км", f"{_fmt_money(t.mileage_km)} км / 1000", _fmt_dec(l_f, 3)),
         ("a", "Коэффициент влияния возраста", "норматив категории", _fmt_dec(a, 4)),
@@ -114,6 +134,10 @@ class AnalogEditDialog:
         self.dialog.geometry("460x360")
         self.dialog.transient(parent)
         self.dialog.grab_set()
+
+        from views.clipboard_fix import install_paste_fix
+
+        install_paste_fix(self.dialog)
 
         self.fields: dict[str, tk.StringVar] = {
             "name": tk.StringVar(value=str(analog_data.get("name", "")) if analog_data else ""),
@@ -229,6 +253,9 @@ class ValuationWindow:
 
         self._init_target_vars(initial_data)
         self._build_ui()
+        from views.clipboard_fix import install_paste_fix
+
+        install_paste_fix(self.window)
         self._center_window()
 
         # If initial data has values, pre-populate
@@ -398,15 +425,15 @@ class ValuationWindow:
                 entry = ttk.Entry(grid, textvariable=var, width=32)
                 entry.grid(row=row, column=1, sticky="ew", pady=2)
 
-        # Localization hint label
-        lbl_hint = ttk.Label(
-            grid,
+        # Localization hint label (ниже кнопки расчёта — кнопка не должна уезжать за экран;
+        # показывается только при наличии текста; живёт в labelframe, а не в grid-фрейме)
+        self._hint_label = ttk.Label(
+            parent,
             textvariable=self.var_localization_hint,
             font=("Segoe UI", 8, "italic"),
             foreground="#b35900",
             wraplength=340,
         )
-        lbl_hint.grid(row=len(fields), column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         grid.columnconfigure(1, weight=1)
 
@@ -422,7 +449,19 @@ class ValuationWindow:
             cursor="hand2",
             pady=6,
         )
-        calc_btn.pack(fill="x", pady=(10, 0))
+        calc_btn.pack(fill="x", pady=(8, 0))
+        self._calc_btn = calc_btn
+        self._hint_label.pack(fill="x", pady=(2, 0))
+
+        # Пустая подсказка не должна съедать высоту панели
+        self.var_localization_hint.trace_add("write", self._toggle_hint_visibility)
+        self._toggle_hint_visibility()
+
+    def _toggle_hint_visibility(self, *args: Any) -> None:
+        if self.var_localization_hint.get():
+            self._hint_label.pack(fill="x", pady=(2, 0), after=self._calc_btn)
+        else:
+            self._hint_label.pack_forget()
 
     def _build_analogs_manager(self, parent: ttk.LabelFrame) -> None:
         btn_bar = ttk.Frame(parent)
@@ -847,6 +886,7 @@ class ValuationWindow:
             "=" * 78,
             f"Объект исследования: {t.brand} {t.model} ({t.year} г.в.)",
             f"VIN: {t.vin or 'не указан'} | Гос. знак: {t.registration_plate or 'не указан'}",
+            f"Страна-производитель: {rep.target_country or 'не определена'}",
             f"Фактический пробег: {int(t.mileage_km):,} км | Фактический возраст: {t.age_years} лет",
             f"Категория ТС: {t.vehicle_category}",
             f"Дата фиксации оценки: {rep.valuation_date or 'на дату расчета'}",
@@ -935,11 +975,12 @@ class ValuationWindow:
             self.var_mileage.set(str(data["count_kilometers"]))
         if data.get("date_deal"):
             self.var_date.set(str(data["date_deal"]))
+        if data.get("vin"):
+            self.var_vin.set(str(data["vin"]))
         brand = str(data.get("mark", ""))
         if brand:
-            vin = str(data.get("vin", ""))
             type_ts = str(data.get("type_ts", ""))
-            self.var_category.set(detect_vehicle_category(brand, vin=vin, type_ts=type_ts))
+            self.var_category.set(detect_vehicle_category(brand, vin=str(data.get("vin", "")), type_ts=type_ts))
 
     def _load_benchmark_gac(self) -> None:
         """Load benchmark GAC M8 parameters from case 4440/25e."""

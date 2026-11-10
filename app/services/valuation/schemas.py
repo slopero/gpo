@@ -154,3 +154,11 @@ class ValuationReport(BaseModel):
     repair_cost: float = Field(..., description="Cost of defect repairs")
     market_value: int = Field(..., description="Final rounded market value (rubles)")
     valuation_date: str | None = Field(default=None, description="Evaluation date string")
+    target_country: str | None = Field(
+        default=None,
+        description="Manufacturer country resolved from VIN (priority) or brand",
+    )
+    target_country_source: str | None = Field(
+        default=None,
+        description="How the country was resolved: 'vin', 'brand' or None",
+    )

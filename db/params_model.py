@@ -12,6 +12,7 @@ class Params(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     mark: Mapped[str] = mapped_column(String(100), nullable=False)
     model: Mapped[str] = mapped_column(String(100), nullable=False)
+    vin: Mapped[str | None] = mapped_column(String(32), nullable=True)
     type_ts: Mapped[str] = mapped_column(String(100), nullable=False)
     year_ts: Mapped[int] = mapped_column(Integer, nullable=True)
     region: Mapped[str] = mapped_column(String(100), nullable=True)
@@ -62,6 +63,7 @@ class ParamsModel:
                 "id": row.id,
                 "mark": row.mark,
                 "model": row.model,
+                "vin": row.vin,
                 "type_ts": row.type_ts,
                 "year_ts": row.year_ts,
                 "region": row.region,
