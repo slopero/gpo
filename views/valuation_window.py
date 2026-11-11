@@ -67,6 +67,14 @@ def _build_target_coefficient_rows(report: ValuationReport) -> list[tuple[str, s
     c_sr = report.weighted_mean_price
     repair = report.repair_cost
 
+    # Корректировка цены: средняя цена оферты до корректировок и итоговый коэффициент
+    if report.analog_results:
+        c0 = sum(a.original_price for a in report.analog_results) / len(report.analog_results)
+        k_price = c_sr / c0 if c0 > 0 else None
+    else:
+        c0 = 0.0
+        k_price = None
+
     if report.bargaining_discounts:
         disc_str = " / ".join(f"{d * 100:.1f}%".replace(".", ",") for d in report.bargaining_discounts)
         k_torg_str = " / ".join(_fmt_dec(1.0 - d, 3) for d in report.bargaining_discounts)
@@ -101,6 +109,18 @@ def _build_target_coefficient_rows(report: ValuationReport) -> list[tuple[str, s
         ),
         ("Сторг", "Скидка на торг, %", "Живаев М.В., 2024", disc_str),
         ("Кторг", "Коэффициент торга", "1 − Сторг", k_torg_str),
+        (
+            "С0",
+            "Средняя цена оферты, руб.",
+            "Σ C_i / n по аналогам (до корректировок)",
+            _fmt_money(c0),
+        ),
+        (
+            "Кц",
+            "Корректировка на цену",
+            "Сср / С0 (износ + торг + привед.)",
+            _fmt_dec(k_price, 4) if k_price is not None else "—",
+        ),
         (
             "Сср",
             "Средневзвешенная стоимость, руб.",
@@ -249,6 +269,8 @@ class ValuationWindow:
         self.window.minsize(1050, 700)
 
         self.analogs_list: list[dict[str, Any]] = []
+        # Kизн по аналогам: заполняется после расчета (пусто = еще не считали)
+        self._analog_wear: list[float] = []
         self.last_report: ValuationReport | None = None
 
         self._init_target_vars(initial_data)
@@ -489,12 +511,13 @@ class ValuationWindow:
         table_frame = ttk.Frame(parent)
         table_frame.pack(fill="both", expand=True)
 
-        columns = ("name", "price", "age", "mileage", "discount", "deflator", "city")
+        columns = ("name", "price", "age", "mileage", "wear", "discount", "deflator", "city")
         self.analogs_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=6)
         self.analogs_tree.heading("name", text="Описание")
         self.analogs_tree.heading("price", text="Цена оферты (₽)")
         self.analogs_tree.heading("age", text="Tф (лет)")
         self.analogs_tree.heading("mileage", text="Пробег (км)")
+        self.analogs_tree.heading("wear", text="Кизн")
         self.analogs_tree.heading("discount", text="Торг")
         self.analogs_tree.heading("deflator", text="К_прив")
         self.analogs_tree.heading("city", text="Город")
@@ -503,6 +526,7 @@ class ValuationWindow:
         self.analogs_tree.column("price", width=105, anchor="e")
         self.analogs_tree.column("age", width=65, anchor="center")
         self.analogs_tree.column("mileage", width=90, anchor="e")
+        self.analogs_tree.column("wear", width=70, anchor="center")
         self.analogs_tree.column("discount", width=65, anchor="center")
         self.analogs_tree.column("deflator", width=70, anchor="center")
         self.analogs_tree.column("city", width=100)
@@ -637,6 +661,8 @@ class ValuationWindow:
         self._refresh_analogs_table()
 
     def _refresh_analogs_table(self) -> None:
+        # Список аналогов изменился — старые Кизн больше не актуальны
+        self._analog_wear = []
         for item in self.analogs_tree.get_children():
             self.analogs_tree.delete(item)
 
@@ -647,6 +673,7 @@ class ValuationWindow:
                 f"{int(an['price']):,}".replace(",", " "),
                 f"{an['age_years']:.1f}",
                 f"{int(an['mileage_km']):,}".replace(",", " "),
+                "—",  # Кизн появится после расчета
                 disc_str,
                 f"{an.get('deflator', 1.0):.4f}",
                 an.get("city", ""),
@@ -855,6 +882,15 @@ class ValuationWindow:
             f"Иф = {report.target_wear_pct:.2f}% (Ω = {report.target_omega:.5f})"
         )
 
+        # Кизн по каждому аналогу (этап 4): заполняем колонку в таблице аналогов
+        self._analog_wear = [a.k_wear for a in report.analog_results]
+        for i, k_wear in enumerate(self._analog_wear):
+            iid = str(i)
+            if self.analogs_tree.exists(iid):
+                row = list(self.analogs_tree.item(iid, "values"))
+                row[4] = _fmt_dec(k_wear, 4)
+                self.analogs_tree.item(iid, values=row)
+
         # Clear and fill target coefficient breakdown
         for item in self.coeff_tree.get_children():
             self.coeff_tree.delete(item)
@@ -958,7 +994,36 @@ class ValuationWindow:
 
         DbRecordsWindow(self.window, records, on_select)
 
+    def _reset_target_state(self) -> None:
+        """Полный сброс объекта исследования перед загрузкой новой записи.
+
+        Иначе поля, которых нет в записи из БД (VIN, гос. знак, аналоги,
+        результаты расчета), остаются от прошлой машины и портят расчет.
+        """
+        self.var_brand.set("")
+        self.var_model.set("")
+        self.var_year.set("")
+        self.var_age.set("1")
+        self.var_mileage.set("")
+        self.var_vin.set("")
+        self.var_plate.set("")
+        self.var_date.set(datetime.now().strftime("%Y-%m-%d"))
+        self.var_category.set("")
+        self.var_moral_wear.set("0")
+        self.var_repair_cost.set("0")
+        self.analogs_list.clear()
+        self._analog_wear = []
+        self._refresh_analogs_table()
+        self.last_report = None
+        for item in self.coeff_tree.get_children():
+            self.coeff_tree.delete(item)
+        self.res_market_value.set("—")
+        self.res_variation.set("—")
+        self.res_target_wear.set("—")
+
     def _fill_from_dict(self, data: dict[str, Any]) -> None:
+        self._reset_target_state()
+
         if data.get("mark"):
             self.var_brand.set(str(data["mark"]))
         if data.get("model"):
