@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.paths import cars_db_path, sales_db_path
+from app.services.valuation.engine import parse_year_month, resolve_cpi_deflator
 
 BRAND_SYNONYMS: dict[str, list[str]] = {
     "lada": ["Лада", "Lada", "ВАЗ"],
@@ -352,6 +353,12 @@ class AnalogSelector:
             col_mileage = cols.get("пробег") or cols.get("mileage")
             col_city = cols.get("город") or cols.get("city")
             col_region = cols.get("регион") or cols.get("region")
+            col_offer_date = (
+                cols.get("дата_размещения_объявления")
+                or cols.get("дата_объявления")
+                or cols.get("date")
+                or cols.get("offer_date")
+            )
 
             if not col_name or not col_price:
                 return []
@@ -379,8 +386,10 @@ class AnalogSelector:
             if not valid_pairs:
                 return []
 
-            # 5. Multi-tier indexed search: strict year tolerance -> relaxed year tolerance
-            year_tolerances: list[int | None] = [2, 4, None] if year is not None else [None]
+            # 5. Multi-tier indexed search: exact year -> strict tolerance -> relaxed tolerance
+            year_tolerances: list[int | None] = (
+                [0, 1, 2, 4, None] if year is not None else [None]
+            )
             raw_rows: list[dict[str, Any]] = []
 
             for tol in year_tolerances:
@@ -427,8 +436,9 @@ class AnalogSelector:
             # 6. Transform raw rows into Analog objects with correct temporal scale
             analogs: list[dict[str, Any]] = []
             now_year = datetime.now(UTC).year
-            val_year = now_year
-            if valuation_date:
+            val_ym = parse_year_month(valuation_date)
+            val_year = val_ym[0] if val_ym is not None else now_year
+            if val_ym is None and valuation_date:
                 try:
                     val_year = int(valuation_date[:4])
                 except ValueError:
@@ -452,11 +462,18 @@ class AnalogSelector:
                     else (year or val_year)
                 )
 
+                offer_date_str: str | None = None
+                if col_offer_date and r.get(col_offer_date):
+                    offer_date_str = str(r[col_offer_date]).strip() or None
+                offer_ym = parse_year_month(offer_date_str)
+                offer_year = offer_ym[0] if offer_ym is not None else None
+
                 age_years = cls._calculate_age(
                     car_year=car_year,
                     val_year=val_year,
                     target_age=target_age,
                     target_year=year,
+                    offer_year=offer_year,
                 )
 
                 raw_mileage = r.get(col_mileage) if col_mileage else None
@@ -466,6 +483,8 @@ class AnalogSelector:
                     target_mileage=target_mileage,
                     target_age=target_age,
                 )
+
+                deflator = resolve_cpi_deflator(valuation_date, offer_date_str)
 
                 city = ""
                 if col_city and r.get(col_city):
@@ -482,7 +501,8 @@ class AnalogSelector:
                     "age_years": age_years,
                     "mileage_km": mileage,
                     "discount": None,
-                    "deflator": 1.0,
+                    "deflator": deflator,
+                    "offer_date": offer_date_str,
                     "city": city,
                     "db_source": db_path.name,
                 })
@@ -596,7 +616,11 @@ class AnalogSelector:
         val_year: int,
         target_age: float | None = None,
         target_year: int | None = None,
+        offer_year: int | None = None,
     ) -> float:
+        if offer_year is not None and car_year:
+            return max(1.0, round(float(offer_year - car_year), 1))
+
         if target_age is not None and target_year is not None:
             age = float(target_age) + float(target_year - car_year)
             return max(1.0, round(age, 1))

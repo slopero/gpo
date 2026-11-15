@@ -66,26 +66,39 @@ class BargainingCategory(StrEnum):
     SPECIAL_EQUIPMENT = "SPECIAL_EQUIPMENT"
 
 
-# Average bargaining discount rates
+# Average bargaining discount rates (default 5% across wear categories)
 BARGAINING_DISCOUNTS: Final[dict[str, float]] = {
-    BargainingCategory.DOMESTIC_VEHICLE.value: 0.06,
+    BargainingCategory.DOMESTIC_VEHICLE.value: 0.05,
     BargainingCategory.IMPORT_VEHICLE.value: 0.05,
-    BargainingCategory.DOMESTIC_TRUCK.value: 0.08,
+    BargainingCategory.DOMESTIC_TRUCK.value: 0.05,
     BargainingCategory.IMPORT_TRUCK.value: 0.05,
-    BargainingCategory.SPECIAL_EQUIPMENT.value: 0.06,
-    # Direct mappings from wear category names for convenience
-    VehicleWearCategory.DOMESTIC_PASSENGER.value: 0.06,
+    BargainingCategory.SPECIAL_EQUIPMENT.value: 0.05,
+    # Direct mappings from wear category names
+    VehicleWearCategory.DOMESTIC_PASSENGER.value: 0.05,
     VehicleWearCategory.ASIAN_EXCEPT_JAPAN.value: 0.05,
     VehicleWearCategory.EUROPEAN_PASSENGER.value: 0.05,
     VehicleWearCategory.JAPANESE_PASSENGER.value: 0.05,
     VehicleWearCategory.AMERICAN_PASSENGER.value: 0.05,
     VehicleWearCategory.FOREIGN_TRUCK.value: 0.05,
-    VehicleWearCategory.DOMESTIC_FLATBED_TRUCK.value: 0.08,
-    VehicleWearCategory.DOMESTIC_TRACTOR.value: 0.08,
-    VehicleWearCategory.DOMESTIC_DUMP_TRUCK.value: 0.08,
-    VehicleWearCategory.DOMESTIC_SPECIAL.value: 0.06,
-    VehicleWearCategory.DOMESTIC_BUS.value: 0.08,
+    VehicleWearCategory.DOMESTIC_FLATBED_TRUCK.value: 0.05,
+    VehicleWearCategory.DOMESTIC_TRACTOR.value: 0.05,
+    VehicleWearCategory.DOMESTIC_DUMP_TRUCK.value: 0.05,
+    VehicleWearCategory.DOMESTIC_SPECIAL.value: 0.05,
+    VehicleWearCategory.DOMESTIC_BUS.value: 0.05,
     VehicleWearCategory.FOREIGN_BUS.value: 0.05,
+    # Common Russian names mapping
+    "Легковые автомобили отечественные": 0.05,
+    "Легковые автомобили азиатские (кроме Японии)": 0.05,
+    "Легковые автомобили европейского производства": 0.05,
+    "Легковые автомобили производства Японии": 0.05,
+    "Легковые автомобили американского производства": 0.05,
+    "Грузовые автомобили зарубежного производства": 0.05,
+    "Грузовые бортовые автомобили отечественные": 0.05,
+    "Тягачи отечественные": 0.05,
+    "Самосвалы отечественные": 0.05,
+    "Специализированные отечественные": 0.05,
+    "Автобусы отечественные": 0.05,
+    "Автобусы зарубежного производства": 0.05,
 }
 
 # Monthly Consumer Price Index (CPI) for non-food goods from Rosstat (2024-2025)
@@ -133,25 +146,29 @@ def detect_vehicle_category(
     clean_vin = vin.strip().upper() if vin else ""
     clean_type = type_ts.strip().lower() if type_ts else ""
 
+    from db.country_lookup import car_origin, category_from_country
+
+    country, _matched, _source = car_origin(vin=clean_vin, brand=clean_brand)
+    db_category = category_from_country(country)
+    is_domestic_origin = db_category == "Легковые автомобили отечественные"
+
     # 1. Check vehicle type specialized categories
     if "самосвал" in clean_type:
         return "Самосвалы отечественные"
     if "тягач" in clean_type:
         return "Тягачи отечественные"
     if "автобус" in clean_type:
-        if clean_brand in ("паз", "лиаз", "нефаз", "кавз", "газель", "уаз"):
+        if is_domestic_origin or clean_brand in ("паз", "лиаз", "нефаз", "кавз", "газель", "уаз"):
             return "Автобусы отечественные"
         return "Автобусы зарубежного производства"
-    if "грузов" in clean_type:
-        if clean_brand in ("камаз", "маз", "урал", "зил", "газ", "газель"):
+    if "грузов" in clean_type and "фургон" not in clean_type and "легков" not in clean_type:
+        if is_domestic_origin or clean_brand in (
+            "камаз", "маз", "урал", "зил", "газ", "газель", "уаз", "uaz", "sollers", "соллерс"
+        ):
             return "Грузовые бортовые автомобили отечественные"
         return "Грузовые автомобили зарубежного производства"
 
     # 2. Страна-производитель из БД: вин приоритетнее марки (договорённость 4440/25э).
-    from db.country_lookup import car_origin, category_from_country
-
-    country, _matched, _source = car_origin(vin=clean_vin, brand=clean_brand)
-    db_category = category_from_country(country)
     if db_category is not None:
         return db_category
 

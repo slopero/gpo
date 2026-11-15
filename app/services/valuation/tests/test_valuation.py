@@ -16,6 +16,7 @@ from app.services.valuation.engine import (
     calculate_sample_mean,
     calculate_variation_coefficient,
     calculate_wear_adjustment,
+    resolve_cpi_deflator,
 )
 from app.services.valuation.schemas import (
     AnalogVehicleInput,
@@ -429,4 +430,22 @@ def test_analog_selector_empty_params() -> None:
     """Test AnalogSelector handles empty mark/model gracefully."""
     res = AnalogSelector.find_analogs(mark="", model="", year=2020)
     assert res == []
+
+
+def test_resolve_cpi_deflator_from_dates() -> None:
+    """Test automatic CPI deflator resolution matching Case 4440/25e dates."""
+    # GAC M8: valuation 2024-09-02, offers in May and July 2025
+    assert math.isclose(resolve_cpi_deflator("2024-09-02", "2025-05-15"), 0.932544, abs_tol=1e-5)
+    assert math.isclose(resolve_cpi_deflator("02.09.2024", "26.07.2025"), 0.925408, abs_tol=1e-5)
+
+    # Sollers Atlant: valuation 2024-08-29, offers in April and August 2025
+    assert math.isclose(resolve_cpi_deflator("2024-08-29", "2025-04-23"), 0.932080, abs_tol=1e-5)
+    assert math.isclose(resolve_cpi_deflator("2024-08-29", "2025-08-21"), 0.924686, abs_tol=1e-5)
+
+    # Sollers Atlant: valuation 2024-09-03, offers in April and August 2025
+    assert math.isclose(resolve_cpi_deflator("2024-09-03", "2025-04-23"), 0.936554, abs_tol=1e-5)
+    assert math.isclose(resolve_cpi_deflator("2024-09-03", "2025-08-26"), 0.929125, abs_tol=1e-5)
+
+    # Within 3 months gap -> 1.0
+    assert resolve_cpi_deflator("2024-09-02", "2024-11-15") == 1.0
 

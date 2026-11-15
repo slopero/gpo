@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-from typing import List, Dict
+from typing import Any, Dict, List
 
 
 class AnalogsWindow:
@@ -45,22 +45,53 @@ class AnalogsWindow:
 
     def _open_valuation(self):
         from datetime import datetime
+        from app.services.valuation.engine import parse_year_month, resolve_cpi_deflator
+        from app.services.valuation.selector import AnalogSelector
         from views.valuation_window import ValuationWindow
+
         val_win = ValuationWindow(self.window, initial_data=self.target_data)
+        val_date_str = str((self.target_data or {}).get("date_deal") or "").strip() or None
+        val_ym = parse_year_month(val_date_str)
+        val_year = val_ym[0] if val_ym is not None else datetime.now().year
+
         analogs = []
         for an in self.analogs:
             try:
                 price = float(str(an.get("Цена", 0)).replace(" ", "").replace(",", "."))
-                mileage = float(str(an.get("Пробег", 0)).replace(" ", "").replace(",", "."))
-                year = int(str(an.get("Год", 2023)).strip())
-                age = max(1.0, float(datetime.now().year - year))
+                if price <= 0:
+                    continue
+                year = int(str(an.get("Год", val_year)).strip())
+                offer_date = (
+                    str(
+                        an.get("Дата_размещения_объявления")
+                        or an.get("Дата_объявления")
+                        or ""
+                    ).strip()
+                    or None
+                )
+                offer_ym = parse_year_month(offer_date)
+                offer_year = offer_ym[0] if offer_ym is not None else None
+                age = AnalogSelector._calculate_age(
+                    car_year=year,
+                    val_year=val_year,
+                    offer_year=offer_year,
+                )
+                mileage = AnalogSelector._calculate_mileage(
+                    raw_mileage=an.get("Пробег"),
+                    age_years=age,
+                )
+                deflator = resolve_cpi_deflator(val_date_str, offer_date)
                 analogs.append({
                     "name": str(an.get("Название_машины", "Аналог")),
                     "price": price,
                     "age_years": age,
                     "mileage_km": mileage,
-                    "city": str(an.get("Регион", "")),
+                    "deflator": deflator,
+                    "offer_date": offer_date,
+                    "city": str(an.get("Город") or an.get("Регион") or ""),
                 })
+                if len(analogs) >= 10:
+                    break
             except Exception:
                 continue
         if analogs:

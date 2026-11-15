@@ -12,6 +12,7 @@ from app.services.valuation.engine import (
     calculate_sample_mean,
     calculate_variation_coefficient,
     calculate_wear_adjustment,
+    resolve_cpi_deflator,
     resolve_wear_coefficients,
 )
 from app.services.valuation.schemas import (
@@ -111,6 +112,8 @@ class ValuationService:
             if deflator is None:
                 if analog.cpi_series is not None:
                     deflator = calculate_deflator(analog.cpi_series)
+                elif analog.offer_date is not None and target.valuation_date is not None:
+                    deflator = resolve_cpi_deflator(target.valuation_date, analog.offer_date)
                 else:
                     deflator = 1.0
             adjusted_price = price_c2 * deflator

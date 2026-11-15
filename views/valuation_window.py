@@ -14,13 +14,14 @@ from app.services.valuation.constants import (
     check_vehicle_localization,
     detect_vehicle_category,
 )
+from app.services.valuation.engine import parse_year_month
 from app.services.valuation.schemas import (
     AnalogVehicleInput,
     TargetVehicleInput,
     ValuationReport,
     ValuationRequest,
 )
-from app.services.valuation.selector import AnalogSelector
+from app.services.valuation.selector import BRAND_SYNONYMS, AnalogSelector
 from app.services.valuation.service import ValuationService
 from views.db_records_window import DbRecordsWindow
 
@@ -334,8 +335,7 @@ class ValuationWindow:
         vin = self.var_vin.get().strip()
         if brand or vin:
             cat, is_localized, note = check_vehicle_localization(brand, vin=vin)
-            if brand:
-                self.var_category.set(cat)
+            self.var_category.set(cat)
             if is_localized:
                 self.var_localization_hint.set(f"💡 {note}")
             else:
@@ -808,11 +808,14 @@ class ValuationWindow:
         brand = self.var_brand.get().strip()
         model = self.var_model.get().strip()
 
-        # Check if loaded analogs mismatch the current vehicle
+        # Check if loaded DB analogs mismatch the current vehicle (accounting for brand synonyms)
         mismatch = False
-        if self.analogs_list and brand:
+        if self.analogs_list and brand and all(an.get("db_source") for an in self.analogs_list):
+            brand_low = brand.lower()
+            brand_terms = {brand_low} | {s.lower() for s in BRAND_SYNONYMS.get(brand_low, [])}
             mismatch = not any(
-                brand.lower() in str(an.get("name", "")).lower() for an in self.analogs_list
+                any(term in str(an.get("name", "")).lower() for term in brand_terms)
+                for an in self.analogs_list
             )
 
         if len(self.analogs_list) < 3 or mismatch:
@@ -852,6 +855,7 @@ class ValuationWindow:
                         price=float(an["price"]),
                         age_years=float(an["age_years"]),
                         mileage_km=float(an["mileage_km"]),
+                        offer_date=an.get("offer_date"),
                         bargaining_discount=an.get("discount"),
                         deflator=an.get("deflator"),
                         city=an.get("city"),
@@ -1028,24 +1032,40 @@ class ValuationWindow:
             self.var_brand.set(str(data["mark"]))
         if data.get("model"):
             self.var_model.set(str(data["model"]))
+        if data.get("date_deal"):
+            self.var_date.set(str(data["date_deal"]))
         if data.get("year_ts"):
             self.var_year.set(str(data["year_ts"]))
             try:
                 y = int(data["year_ts"])
-                now_y = datetime.now().year
-                self.var_age.set(str(max(1, now_y - y)))
+                val_ym = parse_year_month(str(data.get("date_deal") or ""))
+                val_y = val_ym[0] if val_ym is not None else datetime.now().year
+                self.var_age.set(str(max(1, val_y - y)))
             except ValueError:
                 pass
         if data.get("count_kilometers"):
             self.var_mileage.set(str(data["count_kilometers"]))
-        if data.get("date_deal"):
-            self.var_date.set(str(data["date_deal"]))
         if data.get("vin"):
             self.var_vin.set(str(data["vin"]))
-        brand = str(data.get("mark", ""))
-        if brand:
-            type_ts = str(data.get("type_ts", ""))
-            self.var_category.set(detect_vehicle_category(brand, vin=str(data.get("vin", "")), type_ts=type_ts))
+
+        moral_wear = 0.0
+        owners_raw = data.get("count_owners")
+        if owners_raw is not None and str(owners_raw).strip() != "":
+            try:
+                if int(float(str(owners_raw).strip())) > 3:
+                    moral_wear += 5.0
+            except ValueError:
+                pass
+        damage_raw = str(data.get("damage") or "").strip().lower()
+        if damage_raw in ("да", "yes", "true", "1", "дтп"):
+            moral_wear += 5.0
+        self.var_moral_wear.set(str(int(moral_wear) if moral_wear.is_integer() else moral_wear))
+
+        brand = str(data.get("mark", "") or "")
+        vin = str(data.get("vin", "") or "")
+        if brand or vin:
+            type_ts = str(data.get("type_ts", "") or "")
+            self.var_category.set(detect_vehicle_category(brand, vin=vin, type_ts=type_ts))
 
     def _load_benchmark_gac(self) -> None:
         """Load benchmark GAC M8 parameters from case 4440/25e."""

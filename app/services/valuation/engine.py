@@ -1,9 +1,15 @@
 """Pure mathematical calculation engine for comparative vehicle valuation."""
 
 import math
+from datetime import date
 from typing import Final, NamedTuple
 
-from app.services.valuation.constants import E_BASE, VARIATION_THRESHOLD, WEAR_COEFFICIENTS
+from app.services.valuation.constants import (
+    E_BASE,
+    ROSSTAT_CPI_NONFOOD,
+    VARIATION_THRESHOLD,
+    WEAR_COEFFICIENTS,
+)
 
 
 class VariationResult(NamedTuple):
@@ -143,6 +149,85 @@ def calculate_deflator(cpi_series: list[float]) -> float:
         raise ValueError("Cumulative inflation product must be greater than zero")
 
     return 1.0 / cumulative_inflation
+
+
+def parse_year_month(raw_date: date | str | None) -> tuple[int, int] | None:
+    """Extract (year, month) from YYYY-MM-DD, DD.MM.YYYY, or date object."""
+    if raw_date is None:
+        return None
+    text = str(raw_date).strip()
+    if not text:
+        return None
+    head = text[:10].replace("/", "-")
+    if "-" in head:
+        parts = head.split("-")
+        if len(parts) >= 2 and len(parts[0]) == 4:
+            try:
+                y, m = int(parts[0]), int(parts[1])
+                if 1900 <= y <= 2100 and 1 <= m <= 12:
+                    return (y, m)
+            except ValueError:
+                return None
+    if "." in head:
+        parts = head.split(".")
+        if len(parts) == 3 and len(parts[2]) == 4:
+            try:
+                y, m = int(parts[2]), int(parts[1])
+                if 1900 <= y <= 2100 and 1 <= m <= 12:
+                    return (y, m)
+            except ValueError:
+                return None
+    return None
+
+
+def _next_year_month(ym: tuple[int, int]) -> tuple[int, int]:
+    y, m = ym
+    if m == 12:
+        return (y + 1, 1)
+    return (y, m + 1)
+
+
+def resolve_cpi_deflator(
+    valuation_date: date | str | None,
+    offer_date: date | str | None,
+) -> float:
+    """Resolve price deflator K_priv between valuation_date and offer_date via Rosstat CPI.
+
+    Per SEC SK RF / Minyust RF methodology (case 4440/25e):
+    - Applied when temporal gap between offer date and valuation date exceeds 3 months.
+    - Multiplies monthly non-food CPI indices from (valuation_month + 1) through offer_month.
+    - Returns 1.0 if dates are missing, within 3 months, or outside available CPI table.
+    """
+    val_ym = parse_year_month(valuation_date)
+    off_ym = parse_year_month(offer_date)
+    if val_ym is None or off_ym is None:
+        return 1.0
+
+    diff_months = (off_ym[0] - val_ym[0]) * 12 + (off_ym[1] - val_ym[1])
+    if abs(diff_months) <= 3:
+        return 1.0
+
+    if diff_months > 3:
+        cur = _next_year_month(val_ym)
+        cpi_series: list[float] = []
+        while cur <= off_ym:
+            cpi_val = ROSSTAT_CPI_NONFOOD.get(cur)
+            if cpi_val is None:
+                return 1.0
+            cpi_series.append(cpi_val)
+            cur = _next_year_month(cur)
+        return calculate_deflator(cpi_series)
+
+    # Offer published > 3 months before valuation date: forward indexation
+    cur = _next_year_month(off_ym)
+    forward_series: list[float] = []
+    while cur <= val_ym:
+        cpi_val = ROSSTAT_CPI_NONFOOD.get(cur)
+        if cpi_val is None:
+            return 1.0
+        forward_series.append(cpi_val)
+        cur = _next_year_month(cur)
+    return math.prod(forward_series)
 
 
 def calculate_analog_weights(
