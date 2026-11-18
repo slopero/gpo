@@ -152,13 +152,17 @@ class AnalogEditDialog:
         self.on_save = on_save
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Параметры объекта-аналога")
-        self.dialog.geometry("460x360")
+        self.dialog.geometry("470x400")
         self.dialog.transient(parent)
         self.dialog.grab_set()
 
         from views.clipboard_fix import install_paste_fix
 
         install_paste_fix(self.dialog)
+
+        raw_deflator = analog_data.get("deflator") if analog_data else None
+        raw_discount = analog_data.get("discount") if analog_data else None
+        raw_offer_date = analog_data.get("offer_date") if analog_data else None
 
         self.fields: dict[str, tk.StringVar] = {
             "name": tk.StringVar(value=str(analog_data.get("name", "")) if analog_data else ""),
@@ -171,11 +175,12 @@ class AnalogEditDialog:
             "mileage_km": tk.StringVar(
                 value=str(analog_data.get("mileage_km", "")) if analog_data else "30000"
             ),
+            "offer_date": tk.StringVar(value=str(raw_offer_date) if raw_offer_date else ""),
             "discount": tk.StringVar(
-                value=str(analog_data.get("discount", "")) if analog_data else ""
+                value=str(raw_discount) if raw_discount is not None else ""
             ),
             "deflator": tk.StringVar(
-                value=str(analog_data.get("deflator", "")) if analog_data else "1.0"
+                value=str(raw_deflator) if raw_deflator is not None else ""
             ),
             "city": tk.StringVar(value=str(analog_data.get("city", "")) if analog_data else ""),
         }
@@ -200,14 +205,15 @@ class AnalogEditDialog:
             ("Цена предложения (руб.):", "price", "4350000"),
             ("Фактический возраст (лет):", "age_years", "2"),
             ("Пробег (км):", "mileage_km", "14000"),
-            ("Скидка на торг (0.05 = 5%):", "discount", "Оставить пустым для авто-расчета"),
-            ("Дефлятор цен К_прив:", "deflator", "1.0 (или расчетный)"),
+            ("Дата объявления (ГГГГ-ММ-ДД):", "offer_date", "2023-09-27 (для авто-расчета К_прив)"),
+            ("Скидка на торг (0.05 = 5%):", "discount", "Пусто = авто по категории"),
+            ("Дефлятор цен К_прив:", "deflator", "Пусто = авто по датам / 1.0"),
             ("Город / Регион оферты:", "city", "Казань"),
         ]
 
-        for idx, (label, key, hint) in enumerate(rows):
+        for idx, (label, key, _hint) in enumerate(rows):
             ttk.Label(frame, text=label).grid(row=idx, column=0, sticky="w", pady=4)
-            entry = ttk.Entry(frame, textvariable=self.fields[key], width=26)
+            entry = ttk.Entry(frame, textvariable=self.fields[key], width=28)
             entry.grid(row=idx, column=1, sticky="ew", pady=4, padx=(8, 0))
 
         btn_row = ttk.Frame(frame)
@@ -225,17 +231,29 @@ class AnalogEditDialog:
             age = float(self.fields["age_years"].get().replace(",", "."))
             mileage = float(self.fields["mileage_km"].get().replace(" ", "").replace(",", "."))
 
+            offer_date_str = self.fields["offer_date"].get().strip() or None
+            if offer_date_str is not None and parse_year_month(offer_date_str) is None:
+                messagebox.showerror(
+                    "Ошибка ввода",
+                    "Некорректная дата объявления. Используйте формат ГГГГ-ММ-ДД или ДД.ММ.ГГГГ.",
+                )
+                return
+
             discount_str = self.fields["discount"].get().strip().replace(",", ".")
             discount = float(discount_str) if discount_str else None
 
             deflator_str = self.fields["deflator"].get().strip().replace(",", ".")
-            deflator = float(deflator_str) if deflator_str else 1.0
+            deflator = float(deflator_str) if deflator_str else None
+            if deflator is not None and deflator <= 0.0:
+                messagebox.showerror("Ошибка ввода", "Дефлятор К_прив должен быть больше 0.")
+                return
 
             result = {
                 "name": self.fields["name"].get().strip() or "Аналог",
                 "price": price,
                 "age_years": age,
                 "mileage_km": mileage,
+                "offer_date": offer_date_str,
                 "discount": discount,
                 "deflator": deflator,
                 "city": self.fields["city"].get().strip(),
@@ -245,7 +263,7 @@ class AnalogEditDialog:
             self.dialog.destroy()
         except ValueError:
             messagebox.showerror(
-                "Ошибка ввода", "Проверьте числовые поля: Цена, Возраст, Пробег, Дефлятор."
+                "Ошибка ввода", "Проверьте числовые поля: Цена, Возраст, Пробег, Торг, Дефлятор."
             )
 
 
@@ -306,6 +324,8 @@ class ValuationWindow:
         self.var_bargaining = tk.StringVar(value="5%")
         self.var_moral_wear = tk.StringVar(value="0")
         self.var_repair_cost = tk.StringVar(value="0")
+        self.var_calc_mileage_from_analogs = tk.BooleanVar(value=False)
+        self.var_include_start_month = tk.BooleanVar(value=False)
 
         # Database selection for market analogs: cars.db is default
         default_db = AnalogSelector.get_default_db()
@@ -459,6 +479,19 @@ class ValuationWindow:
 
         grid.columnconfigure(1, weight=1)
 
+        options_frame = ttk.Frame(parent)
+        options_frame.pack(fill="x", pady=(4, 0))
+        ttk.Checkbutton(
+            options_frame,
+            text="Пробег по среднему аналогов (если неизвестен)",
+            variable=self.var_calc_mileage_from_analogs,
+        ).pack(anchor="w")
+        ttk.Checkbutton(
+            options_frame,
+            text="Включать месяц даты оценки в расчёт ИПЦ",
+            variable=self.var_include_start_month,
+        ).pack(anchor="w")
+
         # Big primary calculate button
         calc_btn = tk.Button(
             parent,
@@ -511,25 +544,27 @@ class ValuationWindow:
         table_frame = ttk.Frame(parent)
         table_frame.pack(fill="both", expand=True)
 
-        columns = ("name", "price", "age", "mileage", "wear", "discount", "deflator", "city")
+        columns = ("name", "price", "age", "mileage", "offer_date", "wear", "discount", "deflator", "city")
         self.analogs_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=6)
         self.analogs_tree.heading("name", text="Описание")
         self.analogs_tree.heading("price", text="Цена оферты (₽)")
         self.analogs_tree.heading("age", text="Tф (лет)")
         self.analogs_tree.heading("mileage", text="Пробег (км)")
+        self.analogs_tree.heading("offer_date", text="Дата объявл.")
         self.analogs_tree.heading("wear", text="Кизн")
         self.analogs_tree.heading("discount", text="Торг")
         self.analogs_tree.heading("deflator", text="К_прив")
         self.analogs_tree.heading("city", text="Город")
 
-        self.analogs_tree.column("name", width=140)
-        self.analogs_tree.column("price", width=105, anchor="e")
-        self.analogs_tree.column("age", width=65, anchor="center")
-        self.analogs_tree.column("mileage", width=90, anchor="e")
-        self.analogs_tree.column("wear", width=70, anchor="center")
-        self.analogs_tree.column("discount", width=65, anchor="center")
-        self.analogs_tree.column("deflator", width=70, anchor="center")
-        self.analogs_tree.column("city", width=100)
+        self.analogs_tree.column("name", width=130)
+        self.analogs_tree.column("price", width=100, anchor="e")
+        self.analogs_tree.column("age", width=55, anchor="center")
+        self.analogs_tree.column("mileage", width=85, anchor="e")
+        self.analogs_tree.column("offer_date", width=85, anchor="center")
+        self.analogs_tree.column("wear", width=65, anchor="center")
+        self.analogs_tree.column("discount", width=60, anchor="center")
+        self.analogs_tree.column("deflator", width=65, anchor="center")
+        self.analogs_tree.column("city", width=90)
 
         scroll_y = ttk.Scrollbar(table_frame, orient="vertical", command=self.analogs_tree.yview)
         self.analogs_tree.configure(yscrollcommand=scroll_y.set)
@@ -668,14 +703,17 @@ class ValuationWindow:
 
         for i, an in enumerate(self.analogs_list):
             disc_str = f"{an['discount'] * 100:.1f}%" if an.get("discount") is not None else "Авто"
+            defl_val = an.get("deflator")
+            defl_str = f"{defl_val:.4f}" if defl_val is not None else "Авто"
             vals = (
                 an.get("name", f"Аналог {i+1}"),
                 f"{int(an['price']):,}".replace(",", " "),
                 f"{an['age_years']:.1f}",
                 f"{int(an['mileage_km']):,}".replace(",", " "),
+                an.get("offer_date") or "—",
                 "—",  # Кизн появится после расчета
                 disc_str,
-                f"{an.get('deflator', 1.0):.4f}",
+                defl_str,
                 an.get("city", ""),
             )
             self.analogs_tree.insert("", "end", iid=str(i), values=vals)
@@ -826,11 +864,42 @@ class ValuationWindow:
                 return
 
         try:
-            year = int(self.var_year.get().strip())
-            age = float(self.var_age.get().strip().replace(",", "."))
-            mileage = float(self.var_mileage.get().strip().replace(" ", "").replace(",", "."))
-            moral_wear = float(self.var_moral_wear.get().strip().replace(",", "."))
-            repair = float(self.var_repair_cost.get().strip().replace(" ", "").replace(",", "."))
+            year_str = self.var_year.get().strip()
+            if not year_str:
+                messagebox.showwarning("Проверка данных", "Укажите год выпуска ТС.")
+                return
+            year = int(year_str)
+
+            age_str = self.var_age.get().strip().replace(",", ".")
+            if not age_str:
+                val_ym = parse_year_month(self.var_date.get().strip())
+                val_y = val_ym[0] if val_ym is not None else datetime.now().year
+                age = float(max(1, val_y - year))
+                self.var_age.set(str(int(age)))
+            else:
+                age = float(age_str)
+
+            mileage_str = self.var_mileage.get().strip().replace(" ", "").replace(",", ".")
+            if self.var_calc_mileage_from_analogs.get() or not mileage_str or mileage_str in {"-", "—"}:
+                analog_mileages = [
+                    float(an["mileage_km"])
+                    for an in self.analogs_list
+                    if an.get("mileage_km") is not None and float(an["mileage_km"]) > 0
+                ]
+                if analog_mileages:
+                    avg_km = sum(analog_mileages) / len(analog_mileages)
+                    mileage = float(round(avg_km / 1000.0) * 1000)
+                else:
+                    mileage = round(max(1000.0, age * 15000.0), 1)
+                self.var_mileage.set(str(int(mileage)))
+            else:
+                mileage = float(mileage_str)
+
+            moral_str = self.var_moral_wear.get().strip().replace(",", ".")
+            moral_wear = float(moral_str) if moral_str else 0.0
+
+            repair_str = self.var_repair_cost.get().strip().replace(" ", "").replace(",", ".")
+            repair = float(repair_str) if repair_str else 0.0
 
             target = TargetVehicleInput(
                 brand=self.var_brand.get().strip() or "ТС",
@@ -842,6 +911,7 @@ class ValuationWindow:
                 vin=self.var_vin.get().strip() or None,
                 registration_plate=self.var_plate.get().strip() or None,
                 valuation_date=self.var_date.get().strip() or None,
+                include_start_month_in_cpi=self.var_include_start_month.get(),
                 moral_wear_pct=moral_wear,
                 repair_cost=repair,
             )
@@ -886,14 +956,21 @@ class ValuationWindow:
             f"Иф = {report.target_wear_pct:.2f}% (Ω = {report.target_omega:.5f})"
         )
 
-        # Кизн по каждому аналогу (этап 4): заполняем колонку в таблице аналогов
+        # Кизн и К_прив по каждому аналогу: обновляем колонки в таблице аналогов
         self._analog_wear = [a.k_wear for a in report.analog_results]
-        for i, k_wear in enumerate(self._analog_wear):
+        for i, res in enumerate(report.analog_results):
             iid = str(i)
             if self.analogs_tree.exists(iid):
                 row = list(self.analogs_tree.item(iid, "values"))
-                row[4] = _fmt_dec(k_wear, 4)
+                row[5] = _fmt_dec(res.k_wear, 4)
+                row[7] = _fmt_dec(res.deflator, 4)
                 self.analogs_tree.item(iid, values=row)
+
+        if report.warnings:
+            messagebox.showwarning(
+                "Предупреждение при расчёте ИПЦ",
+                "\n".join(report.warnings),
+            )
 
         # Clear and fill target coefficient breakdown
         for item in self.coeff_tree.get_children():
@@ -932,8 +1009,8 @@ class ValuationWindow:
             f"Дата фиксации оценки: {rep.valuation_date or 'на дату расчета'}",
             "-" * 78,
             "1. ПРОВЕРКА ВЫБОРКИ НА ОДНОРОДНОСТЬ (Этап 2):",
-            f"   Средняя цена выборки C_ср = {int(rep.variation_analysis.mean_price):,} руб.",
-            f"   Выборочное стандартное отклонение s = {int(rep.variation_analysis.std_dev):,} руб.",
+            f"   Средняя цена выборки C_ср = {round(rep.variation_analysis.mean_price):,} руб.",
+            f"   Выборочное стандартное отклонение s = {round(rep.variation_analysis.std_dev):,} руб.",
             f"   Коэффициент вариации v = {rep.variation_analysis.variation_coefficient:.4f} ({rep.variation_analysis.variation_coefficient*100:.2f}%)",
             f"   Критерий: v <= 0.30 -> {'Совокупность ОДНОРОДНА, выборка валидна' if rep.variation_analysis.is_homogeneous else 'Выборка неоднородна'}",
             "-" * 78,
@@ -1015,6 +1092,8 @@ class ValuationWindow:
         self.var_category.set("")
         self.var_moral_wear.set("0")
         self.var_repair_cost.set("0")
+        self.var_calc_mileage_from_analogs.set(False)
+        self.var_include_start_month.set(False)
         self.analogs_list.clear()
         self._analog_wear = []
         self._refresh_analogs_table()
@@ -1080,6 +1159,8 @@ class ValuationWindow:
         self.var_date.set("2024-09-02")
         self.var_moral_wear.set("0")
         self.var_repair_cost.set("0")
+        self.var_calc_mileage_from_analogs.set(False)
+        self.var_include_start_month.set(False)
 
         self.analogs_list = [
             {
@@ -1126,6 +1207,8 @@ class ValuationWindow:
         self.var_date.set("2024-08-29")
         self.var_moral_wear.set("0")
         self.var_repair_cost.set("0")
+        self.var_calc_mileage_from_analogs.set(False)
+        self.var_include_start_month.set(False)
 
         self.analogs_list = [
             {
@@ -1169,6 +1252,8 @@ class ValuationWindow:
         self.var_plate.set("")
         self.var_moral_wear.set("0")
         self.var_repair_cost.set("0")
+        self.var_calc_mileage_from_analogs.set(False)
+        self.var_include_start_month.set(False)
         self.analogs_list.clear()
         self._refresh_analogs_table()
         for item in self.coeff_tree.get_children():

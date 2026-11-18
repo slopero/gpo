@@ -187,47 +187,73 @@ def _next_year_month(ym: tuple[int, int]) -> tuple[int, int]:
     return (y, m + 1)
 
 
-def resolve_cpi_deflator(
+def _cpi_month_range(
     valuation_date: date | str | None,
     offer_date: date | str | None,
-) -> float:
-    """Resolve price deflator K_priv between valuation_date and offer_date via Rosstat CPI.
+    include_start_month: bool = False,
+) -> tuple[list[tuple[int, int]], bool]:
+    """Build ordered (year, month) list and direction flag for CPI adjustment.
 
-    Per SEC SK RF / Minyust RF methodology (case 4440/25e):
-    - Applied when temporal gap between offer date and valuation date exceeds 3 months.
-    - Multiplies monthly non-food CPI indices from (valuation_month + 1) through offer_month.
-    - Returns 1.0 if dates are missing, within 3 months, or outside available CPI table.
+    Returns:
+        (months, invert): When invert is True, offer_date > valuation_date + 3 months
+        (deflation via 1 / prod). When invert is False, either within 3 months (empty list)
+        or offer_date < valuation_date - 3 months (forward indexation via prod).
     """
     val_ym = parse_year_month(valuation_date)
     off_ym = parse_year_month(offer_date)
     if val_ym is None or off_ym is None:
-        return 1.0
+        return [], False
 
     diff_months = (off_ym[0] - val_ym[0]) * 12 + (off_ym[1] - val_ym[1])
     if abs(diff_months) <= 3:
+        return [], False
+
+    invert = diff_months > 3
+    start_ym, end_ym = (val_ym, off_ym) if invert else (off_ym, val_ym)
+    cur = start_ym if include_start_month else _next_year_month(start_ym)
+
+    months: list[tuple[int, int]] = []
+    while cur <= end_ym:
+        months.append(cur)
+        cur = _next_year_month(cur)
+    return months, invert
+
+
+def find_missing_cpi_months(
+    valuation_date: date | str | None,
+    offer_date: date | str | None,
+    include_start_month: bool = False,
+) -> list[tuple[int, int]]:
+    """Return (year, month) entries required for CPI calculation that are absent from ROSSTAT_CPI_NONFOOD."""
+    months, _ = _cpi_month_range(valuation_date, offer_date, include_start_month)
+    return [ym for ym in months if ym not in ROSSTAT_CPI_NONFOOD]
+
+
+def resolve_cpi_deflator(
+    valuation_date: date | str | None,
+    offer_date: date | str | None,
+    include_start_month: bool = False,
+) -> float:
+    """Resolve price deflator K_priv between valuation_date and offer_date via Rosstat CPI.
+
+    Per SEC SK RF / Minyust RF methodology:
+    - Applied when temporal gap between offer date and valuation date exceeds 3 months.
+    - By default multiplies monthly indices from (start_month + 1) through end_month;
+      set include_start_month=True to include start_month as well.
+    - Returns 1.0 if dates are missing, within 3 months, or outside available CPI table.
+    """
+    months, invert = _cpi_month_range(valuation_date, offer_date, include_start_month)
+    if not months:
         return 1.0
 
-    if diff_months > 3:
-        cur = _next_year_month(val_ym)
-        cpi_series: list[float] = []
-        while cur <= off_ym:
-            cpi_val = ROSSTAT_CPI_NONFOOD.get(cur)
-            if cpi_val is None:
-                return 1.0
-            cpi_series.append(cpi_val)
-            cur = _next_year_month(cur)
-        return calculate_deflator(cpi_series)
-
-    # Offer published > 3 months before valuation date: forward indexation
-    cur = _next_year_month(off_ym)
-    forward_series: list[float] = []
-    while cur <= val_ym:
-        cpi_val = ROSSTAT_CPI_NONFOOD.get(cur)
+    cpi_series: list[float] = []
+    for ym in months:
+        cpi_val = ROSSTAT_CPI_NONFOOD.get(ym)
         if cpi_val is None:
             return 1.0
-        forward_series.append(cpi_val)
-        cur = _next_year_month(cur)
-    return math.prod(forward_series)
+        cpi_series.append(cpi_val)
+
+    return calculate_deflator(cpi_series) if invert else math.prod(cpi_series)
 
 
 def calculate_analog_weights(

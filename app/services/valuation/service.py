@@ -12,6 +12,7 @@ from app.services.valuation.engine import (
     calculate_sample_mean,
     calculate_variation_coefficient,
     calculate_wear_adjustment,
+    find_missing_cpi_months,
     resolve_cpi_deflator,
     resolve_wear_coefficients,
 )
@@ -83,6 +84,7 @@ class ValuationService:
         # Stages 3-6: Individual analog adjustments
         raw_adjusted_prices: list[float] = []
         analog_pre_results: list[dict[str, float | str]] = []
+        warnings: list[str] = []
 
         for idx, analog in enumerate(analogs, start=1):
             analog_id = analog.id or f"Analog_{idx}"
@@ -113,7 +115,28 @@ class ValuationService:
                 if analog.cpi_series is not None:
                     deflator = calculate_deflator(analog.cpi_series)
                 elif analog.offer_date is not None and target.valuation_date is not None:
-                    deflator = resolve_cpi_deflator(target.valuation_date, analog.offer_date)
+                    missing_months = find_missing_cpi_months(
+                        target.valuation_date,
+                        analog.offer_date,
+                        include_start_month=target.include_start_month_in_cpi,
+                    )
+                    if missing_months:
+                        first_y, first_m = missing_months[0]
+                        last_y, last_m = missing_months[-1]
+                        period_str = (
+                            f"{first_y:04d}-{first_m:02d}"
+                            if len(missing_months) == 1
+                            else f"{first_y:04d}-{first_m:02d}..{last_y:04d}-{last_m:02d}"
+                        )
+                        warnings.append(
+                            f"{analog_id}: в таблице ИПЦ отсутствуют индексы за {period_str}; "
+                            "применён дефлятор К_прив = 1.0."
+                        )
+                    deflator = resolve_cpi_deflator(
+                        target.valuation_date,
+                        analog.offer_date,
+                        include_start_month=target.include_start_month_in_cpi,
+                    )
                 else:
                     deflator = 1.0
             adjusted_price = price_c2 * deflator
@@ -212,6 +235,7 @@ class ValuationService:
             valuation_date=val_date_str,
             target_country=country,
             target_country_source=country_source,
+            warnings=warnings,
         )
 
     def evaluate_dict(self, data: dict[str, object]) -> ValuationReport:

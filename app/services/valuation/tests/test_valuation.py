@@ -16,6 +16,7 @@ from app.services.valuation.engine import (
     calculate_sample_mean,
     calculate_variation_coefficient,
     calculate_wear_adjustment,
+    find_missing_cpi_months,
     resolve_cpi_deflator,
 )
 from app.services.valuation.schemas import (
@@ -448,4 +449,90 @@ def test_resolve_cpi_deflator_from_dates() -> None:
 
     # Within 3 months gap -> 1.0
     assert resolve_cpi_deflator("2024-09-02", "2024-11-15") == 1.0
+
+    # Mini Cooper case 113-19/07-18/72-2023 (Table 3 includes valuation month 2022-03)
+    assert math.isclose(
+        resolve_cpi_deflator("2022-03-11", "2023-09-27", include_start_month=True),
+        0.8624,
+        abs_tol=1e-4,
+    )
+    assert math.isclose(
+        resolve_cpi_deflator("2022-03-11", "2023-07-20", include_start_month=True),
+        0.8818,
+        abs_tol=1e-4,
+    )
+
+    # Missing future CPI months are reported explicitly
+    missing = find_missing_cpi_months("2026-01-01", "2026-12-01")
+    assert (2026, 10) in missing
+    assert (2026, 12) in missing
+
+
+def test_benchmark_mini_cooper_clubman_s_case() -> None:
+    """Reference test: Mini Cooper Clubman S (Expert conclusion 113-19/07-18/72-2023)."""
+    target = TargetVehicleInput(
+        brand="Mini",
+        model="Cooper Clubman S",
+        year=2012,
+        age_years=10.0,
+        mileage_km=163_000.0,
+        vehicle_category=VehicleWearCategory.EUROPEAN_PASSENGER.value,
+        vin="WMWZG31020T467869",
+        registration_plate="Р263ВЕ77",
+        valuation_date="2022-03-11",
+        include_start_month_in_cpi=True,
+    )
+    analogs = [
+        AnalogVehicleInput(
+            id="Analog_1",
+            price=990_000.0,
+            age_years=11.0,
+            mileage_km=239_000.0,
+            offer_date="2023-09-27",
+        ),
+        AnalogVehicleInput(
+            id="Analog_2",
+            price=1_180_000.0,
+            age_years=11.0,
+            mileage_km=129_000.0,
+            offer_date="2023-09-18",
+        ),
+        AnalogVehicleInput(
+            id="Analog_3",
+            price=1_150_000.0,
+            age_years=11.0,
+            mileage_km=120_000.0,
+            offer_date="2023-07-20",
+        ),
+    ]
+    report = ValuationService().evaluate(ValuationRequest(target=target, analogs=analogs))
+    assert not report.warnings
+    assert math.isclose(report.target_wear_pct, 59.67, abs_tol=0.01)
+    assert math.isclose(report.analog_results[0].deflator, 0.8624, abs_tol=1e-4)
+    assert math.isclose(report.analog_results[1].deflator, 0.8624, abs_tol=1e-4)
+    assert math.isclose(report.analog_results[2].deflator, 0.8818, abs_tol=1e-4)
+    # Exact float arithmetic yields 971 420 vs expert's 971 367 (+53 RUB / 0.005% from Table 4 rounding)
+    assert report.market_value == 971_420
+    assert math.isclose(report.market_value, 971_367, abs_tol=60)
+
+
+def test_valuation_emits_warning_on_missing_cpi_months() -> None:
+    """Missing CPI months emit a warning instead of failing silently."""
+    target = TargetVehicleInput(
+        brand="Mini",
+        model="Cooper",
+        year=2012,
+        age_years=10.0,
+        mileage_km=150_000.0,
+        vehicle_category=VehicleWearCategory.EUROPEAN_PASSENGER.value,
+        valuation_date="2026-01-01",
+    )
+    analogs = [
+        AnalogVehicleInput(price=1_000_000.0, age_years=10.0, mileage_km=140_000.0, offer_date="2030-05-01"),
+        AnalogVehicleInput(price=1_100_000.0, age_years=10.0, mileage_km=150_000.0, offer_date="2030-05-01"),
+        AnalogVehicleInput(price=1_200_000.0, age_years=10.0, mileage_km=160_000.0, offer_date="2030-05-01"),
+    ]
+    report = ValuationService().evaluate(ValuationRequest(target=target, analogs=analogs))
+    assert len(report.warnings) == 3
+    assert all(res.deflator == 1.0 for res in report.analog_results)
 

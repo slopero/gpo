@@ -86,7 +86,7 @@ class AnalogsWindow:
                     "price": price,
                     "age_years": age,
                     "mileage_km": mileage,
-                    "deflator": deflator,
+                    "deflator": None if offer_date else deflator,
                     "offer_date": offer_date,
                     "city": str(an.get("Город") or an.get("Регион") or ""),
                 })

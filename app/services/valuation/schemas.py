@@ -33,6 +33,10 @@ class TargetVehicleInput(BaseModel):
         default=None,
         description="Legal evaluation date",
     )
+    include_start_month_in_cpi: bool = Field(
+        default=False,
+        description="Include the start month itself when computing Rosstat CPI deflator",
+    )
     moral_wear_pct: float = Field(
         default=0.0,
         description="Moral wear percentage (default 0.0%)",
@@ -161,4 +165,8 @@ class ValuationReport(BaseModel):
     target_country_source: str | None = Field(
         default=None,
         description="How the country was resolved: 'vin', 'brand' or None",
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal warnings emitted during valuation (e.g. missing CPI months)",
     )
