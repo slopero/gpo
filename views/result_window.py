@@ -23,19 +23,24 @@ class ResultWindow:
         self.on_back = on_back
 
         self.window = tk.Toplevel(parent)
-        self.window.title("Поиск аналогов и анализ рынка")
-        self.window.geometry("740x520")
+        self.window.title("Карточка транспортного средства")
+        self.window.geometry("760x540")
         self.window.protocol("WM_DELETE_WINDOW", self._go_back)
 
         self._center_window()
 
-        title = tk.Label(self.window, text="Введенные данные", font=("Segoe UI", 14, "bold"))
-        title.pack(pady=(12, 10))
+        top_bar = ttk.Frame(self.window, padding=(14, 12, 14, 6))
+        top_bar.pack(fill="x")
 
-        body_frame = tk.Frame(self.window)
-        body_frame.pack(fill="both", expand=True, padx=14, pady=(0, 12))
+        ttk.Button(top_bar, text="← Назад", command=self._go_back, width=12).pack(side="left")
+        tk.Label(top_bar, text="Введенные данные ТС", font=("Segoe UI", 14, "bold")).pack(
+            side="left", padx=14
+        )
 
-        text = tk.Text(body_frame, wrap="word", height=20)
+        body_frame = ttk.Frame(self.window, padding=(14, 4, 14, 10))
+        body_frame.pack(fill="both", expand=True)
+
+        text = tk.Text(body_frame, wrap="word", height=20, font=("Segoe UI", 10), padx=8, pady=8)
         text.pack(fill="both", expand=True)
 
         lines = []
@@ -47,21 +52,35 @@ class ResultWindow:
         text.insert("1.0", "\n".join(lines) if lines else "Нет заполненных данных")
         text.config(state="disabled")
 
-        button_row = tk.Frame(self.window)
-        button_row.pack(pady=(0, 14))
+        button_row = ttk.Frame(self.window, padding=(14, 0, 14, 14))
+        button_row.pack(fill="x")
 
-        tk.Button(button_row, text="Провести анализ рынка", width=18, command=self._handle_action_one).pack(side="left", padx=4)
-        tk.Button(button_row, text="Поиск аналогов", width=14, command=self._handle_action_two).pack(side="left", padx=4)
+        ttk.Button(button_row, text="← Назад", width=12, command=self._go_back).pack(
+            side="left", padx=(0, 6)
+        )
+        ttk.Button(
+            button_row,
+            text="📊 Анализ рынка",
+            width=18,
+            command=self._handle_action_one,
+        ).pack(side="left", padx=6)
+        ttk.Button(
+            button_row,
+            text="🔍 Поиск аналогов",
+            width=18,
+            command=self._handle_action_two,
+        ).pack(side="left", padx=6)
         tk.Button(
             button_row,
-            text="Судебная оценка (СК РФ)",
-            width=20,
+            text="⚖️ Судебная оценка (СК РФ)",
+            width=24,
             command=self._handle_valuation,
             bg="#0066cc",
             fg="white",
             font=("Segoe UI", 9, "bold"),
-        ).pack(side="left", padx=4)
-        tk.Button(button_row, text="Назад к форме", width=13, command=self._go_back).pack(side="left", padx=4)
+            cursor="hand2",
+            pady=4,
+        ).pack(side="right")
 
     def _center_window(self):
         """Центрирует окно на экране"""
@@ -72,12 +91,29 @@ class ResultWindow:
         y = (self.window.winfo_screenheight() // 2) - (height // 2)
         self.window.geometry(f'{width}x{height}+{x}+{y}')
 
+    def _restore_self(self):
+        if self.window.winfo_exists():
+            self.window.deiconify()
+            self.window.lift()
+            self.window.focus_force()
+
     def _handle_action_one(self):
-        report_main()
+        self.window.withdraw()
+        try:
+            report_main()
+        finally:
+            self._restore_self()
 
     def _handle_valuation(self):
         from views.valuation_window import ValuationWindow
-        ValuationWindow(self.window, controller=self.controller, initial_data=self.data)
+
+        self.window.withdraw()
+        ValuationWindow(
+            self.window,
+            controller=self.controller,
+            initial_data=self.data,
+            on_back=self._restore_self,
+        )
     
     def _handle_action_two(self):
         """Поиск аналогов с выбором БД и прогресс-баром"""
@@ -127,7 +163,14 @@ class ResultWindow:
                     return
                 
                 from views.analogs_window import AnalogsWindow
-                AnalogsWindow(self.window, analogs, target_data=self.data)
+
+                self.window.withdraw()
+                AnalogsWindow(
+                    self.window,
+                    analogs,
+                    target_data=self.data,
+                    on_back=self._restore_self,
+                )
                 
             except Exception as e:
                 progress_window.destroy()

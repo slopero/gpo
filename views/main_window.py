@@ -31,50 +31,88 @@ class MainWindow:
     def __init__(self, controller):
         self.controller = controller
         self.root = tk.Tk()
-        self.root.title("Форма для заполнения данных")
-        self.root.geometry("560x680")
+        self.root.title("Оценка стоимости ТС — Главное меню")
+        self.root.geometry("600x740")
+        self.root.minsize(560, 680)
 
         self.field_vars = {}
         self.field_labels = {}
         self._build_form()
         install_paste_fix(self.root)
+        self._center_window()
+
+    def _center_window(self):
+        self.root.update_idletasks()
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+        x = max(10, (self.root.winfo_screenwidth() // 2) - (w // 2))
+        y = max(10, (self.root.winfo_screenheight() // 2) - (h // 2))
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
 
     # Построение формы на основе FIELD_CONFIG
     def _build_form(self):
+        container = ttk.Frame(self.root, padding=16)
+        container.pack(fill="both", expand=True)
+
+        header = tk.Label(
+            container,
+            text="Карточка транспортного средства",
+            font=("Segoe UI", 14, "bold"),
+        )
+        header.pack(anchor="w")
+        ttk.Label(
+            container,
+            text="Заполните параметры оцениваемого авто или откройте сохранённую запись из базы.",
+            foreground="#555555",
+        ).pack(anchor="w", pady=(2, 12))
+
+        form_frame = ttk.Frame(container)
+        form_frame.pack(fill="both", expand=True)
+        form_frame.columnconfigure(1, weight=1)
+
         # Получаем данные из FIELD_CONFIG и создаем поля
         for row, (label_text, key, options) in enumerate(self.FIELD_CONFIG):
-            self._create_field(row, label_text, key, options)
+            self._create_field(form_frame, row, label_text, key, options)
 
-        button_row = tk.Frame(self.root)
-        button_row.grid(row=len(self.FIELD_CONFIG), column=0, columnspan=2, pady=16)
+        button_row = ttk.Frame(container)
+        button_row.pack(fill="x", pady=(14, 0))
 
-        tk.Button(button_row, text="Сохранить", command=self.submit_form, width=15).pack(side="left", padx=4)
-        tk.Button(button_row, text="Выбрать из БД", command=self.open_db_records, width=15).pack(
-            side="left", padx=4
-        )
+        ttk.Button(
+            button_row,
+            text="💾 Сохранить и продолжить",
+            command=self.submit_form,
+        ).pack(side="left", expand=True, fill="x", padx=(0, 6))
+        ttk.Button(
+            button_row,
+            text="📂 Выбрать из БД",
+            command=self.open_db_records,
+        ).pack(side="left", expand=True, fill="x", padx=6)
         tk.Button(
             button_row,
-            text="Судебная оценка (СК РФ)",
+            text="⚖️ Судебная оценка (СК РФ)",
             command=self.open_valuation_window,
-            width=22,
             bg="#0066cc",
             fg="white",
             font=("Segoe UI", 9, "bold"),
-        ).pack(side="left", padx=4)
+            relief="raised",
+            cursor="hand2",
+            padx=10,
+            pady=4,
+        ).pack(side="left", expand=True, fill="x", padx=(6, 0))
 
     """Создание поля с меткой и виджетом ввода (Entry или Combobox)"""
-    def _create_field(self, row, label_text, key, options=None):
+    def _create_field(self, parent, row, label_text, key, options=None):
         var = tk.StringVar()
-        tk.Label(self.root, text=f"{label_text}:").grid(row=row, column=0, padx=10, pady=6, sticky="w")
+        ttk.Label(parent, text=f"{label_text}:").grid(row=row, column=0, padx=(0, 10), pady=5, sticky="w")
 
         # Если есть варианты для выбора
         if options:
-            widget = ttk.Combobox(self.root, textvariable=var, values=options, state="readonly", width=37)
-            widget.grid(row=row, column=1, padx=10, pady=6)
+            widget = ttk.Combobox(parent, textvariable=var, values=options, state="readonly", width=37)
+            widget.grid(row=row, column=1, pady=5, sticky="ew")
         # Иначе обычное поле ввода
         else:
-            widget = tk.Entry(self.root, textvariable=var, width=40)
-            widget.grid(row=row, column=1, padx=10, pady=6)
+            widget = ttk.Entry(parent, textvariable=var, width=40)
+            widget.grid(row=row, column=1, pady=5, sticky="ew")
 
         self.field_vars[key] = var
         self.field_labels[key] = label_text
@@ -105,7 +143,13 @@ class MainWindow:
             messagebox.showinfo("База данных", "В базе пока нет сохраненных записей")
             return
 
-        DbRecordsWindow(self.root, records, self._open_selected_record)
+        self.root.withdraw()
+        DbRecordsWindow(
+            self.root,
+            records,
+            self._open_selected_record,
+            on_back=self._restore_form,
+        )
 
     def _open_selected_record(self, record_id):
         self.controller.select_record(record_id)
@@ -135,7 +179,14 @@ class MainWindow:
     def open_valuation_window(self):
         current_data = {key: var.get().strip() for key, var in self.field_vars.items()}
         from views.valuation_window import ValuationWindow
-        ValuationWindow(self.root, controller=self.controller, initial_data=current_data)
+
+        self.root.withdraw()
+        ValuationWindow(
+            self.root,
+            controller=self.controller,
+            initial_data=current_data,
+            on_back=self._restore_form,
+        )
 
     def run(self):
         self.root.mainloop()

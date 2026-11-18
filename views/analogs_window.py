@@ -6,42 +6,66 @@ from typing import Any, Dict, List
 class AnalogsWindow:
     """Окно для отображения найденных аналогов"""
     
-    def __init__(self, parent, analogs: List[Dict], target_data: Dict[str, Any] | None = None):
+    def __init__(
+        self,
+        parent,
+        analogs: List[Dict],
+        target_data: Dict[str, Any] | None = None,
+        on_back=None,
+    ):
         self.parent = parent
         self.analogs = analogs
         self.target_data = target_data
-        
+        self.on_back = on_back
+
         self.window = tk.Toplevel(parent)
         self.window.title("Найденные аналоги")
-        self.window.geometry("1000x600")
+        self.window.geometry("1020x620")
+        self.window.protocol("WM_DELETE_WINDOW", self._go_back)
         self._center_window()
-        
-        title = tk.Label(
-            self.window, 
-            text=f"Найдено аналогов: {len(analogs)}", 
-            font=("Segoe UI", 14, "bold")
-        )
-        title.pack(pady=(12, 10))
-        
-        frame = tk.Frame(self.window)
-        frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
-        
+
+        top_bar = ttk.Frame(self.window, padding=(12, 12, 12, 6))
+        top_bar.pack(fill="x")
+
+        ttk.Button(top_bar, text="← Назад", command=self._go_back, width=12).pack(side="left")
+        tk.Label(
+            top_bar,
+            text=f"Найдено аналогов: {len(analogs)}",
+            font=("Segoe UI", 14, "bold"),
+        ).pack(side="left", padx=14)
+
+        frame = ttk.Frame(self.window, padding=(12, 4, 12, 10))
+        frame.pack(fill="both", expand=True)
+
         self._create_table(frame)
-        
-        btn_frame = tk.Frame(self.window)
-        btn_frame.pack(pady=(0, 12))
+
+        btn_frame = ttk.Frame(self.window, padding=(12, 0, 12, 12))
+        btn_frame.pack(fill="x")
+        ttk.Button(btn_frame, text="← Назад", command=self._go_back, width=14).pack(
+            side="left"
+        )
         tk.Button(
             btn_frame,
             text="⚖️ Передать в судебную оценку",
             command=self._open_valuation,
-            width=26,
+            width=28,
             bg="#0066cc",
             fg="white",
             font=("Segoe UI", 9, "bold"),
-        ).pack(side="left", padx=8)
-        tk.Button(btn_frame, text="Закрыть", command=self.window.destroy, width=15).pack(
-            side="left", padx=8
-        )
+            cursor="hand2",
+            pady=4,
+        ).pack(side="right")
+
+    def _go_back(self):
+        self.window.destroy()
+        if self.on_back is not None:
+            self.on_back()
+
+    def _restore_self(self):
+        if self.window.winfo_exists():
+            self.window.deiconify()
+            self.window.lift()
+            self.window.focus_force()
 
     def _open_valuation(self):
         from datetime import datetime
@@ -49,7 +73,12 @@ class AnalogsWindow:
         from app.services.valuation.selector import AnalogSelector
         from views.valuation_window import ValuationWindow
 
-        val_win = ValuationWindow(self.window, initial_data=self.target_data)
+        self.window.withdraw()
+        val_win = ValuationWindow(
+            self.window,
+            initial_data=self.target_data,
+            on_back=self._restore_self,
+        )
         val_date_str = str((self.target_data or {}).get("date_deal") or "").strip() or None
         val_ym = parse_year_month(val_date_str)
         val_year = val_ym[0] if val_ym is not None else datetime.now().year

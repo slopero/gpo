@@ -84,57 +84,57 @@ def _build_target_coefficient_rows(report: ValuationReport) -> list[tuple[str, s
         k_torg_str = "—"
 
     return [
-        ("Кат.", "Категория ТС (Методика Минюста)", t.vehicle_category, ""),
+        ("Категория", "Категория ТС (Методика Минюста РФ)", "классификация ТС", t.vehicle_category),
         (
             "Страна",
             "Страна-производитель",
             _country_formula(report),
             _country_value(report),
         ),
-        ("Tф", "Фактический возраст, лет", "по документам", _fmt_dec(t_f, 2)),
-        ("Lф", "Фактический пробег, тыс. км", f"{_fmt_money(t.mileage_km)} км / 1000", _fmt_dec(l_f, 3)),
+        ("T_ф", "Фактический возраст ТС, лет", "по документам", _fmt_dec(t_f, 2)),
+        ("L_ф", "Фактический пробег ТС, тыс. км", f"{_fmt_money(t.mileage_km)} км / 1000", _fmt_dec(l_f, 3)),
         ("a", "Коэффициент влияния возраста", "норматив категории", _fmt_dec(a, 4)),
         ("b", "Коэффициент влияния пробега", "норматив категории", _fmt_dec(b, 4)),
         (
             "Ω",
             "Интенсивность эксплуатации",
-            f"a·Tф + b·Lф = {_fmt_dec(a, 4)}·{_fmt_dec(t_f, 2)} + {_fmt_dec(b, 4)}·{_fmt_dec(l_f, 3)}",
+            f"a · T_ф + b · L_ф = {_fmt_dec(a, 4)} · {_fmt_dec(t_f, 2)} + {_fmt_dec(b, 4)} · {_fmt_dec(l_f, 3)}",
             _fmt_dec(omega, 5),
         ),
         ("e", "Основание натурального логарифма", "по Методике", _fmt_dec(e, 2)),
         (
-            "Иф",
-            "Физический износ, %",
-            f"100·(1 − e^−Ω) = 100·(1 − {_fmt_dec(e, 2)}^−{_fmt_dec(omega, 5)})",
+            "И_ф",
+            "Физический износ объекта, %",
+            f"100 · (1 − e^(−Ω)) = 100 · (1 − {_fmt_dec(e, 2)}^(−{_fmt_dec(omega, 5)}))",
             _fmt_dec(wear, 2),
         ),
-        ("Сторг", "Скидка на торг, %", "Живаев М.В., 2024", disc_str),
-        ("Кторг", "Коэффициент торга", "1 − Сторг", k_torg_str),
+        ("С_торг", "Скидка на торг, %", "Живаев М.В., 2024", disc_str),
+        ("К_торг", "Коэффициент корректировки на торг", "1 − С_торг", k_torg_str),
         (
-            "С0",
-            "Средняя цена оферты, руб.",
-            "Σ C_i / n по аналогам (до корректировок)",
+            "С₀",
+            "Средняя цена предложения аналогов, руб.",
+            "Σ C_i / n (до корректировок)",
             _fmt_money(c0),
         ),
         (
-            "Кц",
-            "Корректировка на цену",
-            "Сср / С0 (износ + торг + привед.)",
+            "К_ц",
+            "Итоговый коэффициент корректировки цены",
+            "С_ср / С₀ (износ + торг + ИПЦ)",
             _fmt_dec(k_price, 4) if k_price is not None else "—",
         ),
         (
-            "Сср",
+            "С_ср",
             "Средневзвешенная стоимость, руб.",
-            "Σ (Cск_i · Кв_i) по аналогам",
+            "Σ (С_ск,i · К_в,i) по аналогам",
             _fmt_money(c_sr),
         ),
-        ("Им", "Моральный износ, %", "Им1 + Им2 + Им3 + Им4", _fmt_dec(moral, 2)),
-        ("Км", "Коэффициент морального износа", "1 − Им / 100", _fmt_dec(moral_k, 4)),
-        ("Сэд", "Устранение дефектов, руб.", "Ср + Сзч + См", _fmt_money(repair)),
+        ("И_м", "Моральный (функциональный) износ, %", "И_м1 + И_м2 + И_м3 + И_м4", _fmt_dec(moral, 2)),
+        ("К_м", "Коэффициент морального износа", "1 − И_м / 100", _fmt_dec(moral_k, 4)),
+        ("С_эд", "Стоимость устранения дефектов, руб.", "С_р + С_зч + С_м", _fmt_money(repair)),
         (
-            "Ств",
-            "РЫНОЧНАЯ СТОИМОСТЬ, руб.",
-            f"Сср·Км − Сэд = {_fmt_money(c_sr)}·{_fmt_dec(moral_k, 4)} − {_fmt_money(repair)}",
+            "С_тв",
+            "Итоговая рыночная стоимость ТС, руб.",
+            f"С_ср · К_м − С_эд = {_fmt_money(c_sr)} · {_fmt_dec(moral_k, 4)} − {_fmt_money(repair)}",
             _fmt_money(report.market_value),
         ),
     ]
@@ -275,9 +275,11 @@ class ValuationWindow:
         parent: tk.Tk | tk.Toplevel,
         controller: Any = None,
         initial_data: dict[str, Any] | None = None,
+        on_back: Any = None,
     ) -> None:
         self.parent = parent
         self.controller = controller
+        self.on_back = on_back
         self.service = ValuationService()
 
         self.window = tk.Toplevel(parent)
@@ -286,9 +288,10 @@ class ValuationWindow:
         )
         self.window.geometry("1180x820")
         self.window.minsize(1050, 700)
+        self.window.protocol("WM_DELETE_WINDOW", self._go_back)
 
         self.analogs_list: list[dict[str, Any]] = []
-        # Kизн по аналогам: заполняется после расчета (пусто = еще не считали)
+        # К_изн по аналогам: заполняется после расчета (пусто = еще не считали)
         self._analog_wear: list[float] = []
         self.last_report: ValuationReport | None = None
 
@@ -303,6 +306,17 @@ class ValuationWindow:
         if initial_data:
             self._fill_from_dict(initial_data)
 
+    def _go_back(self) -> None:
+        self.window.destroy()
+        if self.on_back is not None:
+            self.on_back()
+
+    def _restore_self(self) -> None:
+        if self.window.winfo_exists():
+            self.window.deiconify()
+            self.window.lift()
+            self.window.focus_force()
+
     def _center_window(self) -> None:
         self.window.update_idletasks()
         w = self.window.winfo_width()
@@ -312,16 +326,15 @@ class ValuationWindow:
         self.window.geometry(f"{w}x{h}+{x}+{y}")
 
     def _init_target_vars(self, initial_data: dict[str, Any] | None) -> None:
-        self.var_brand = tk.StringVar(value="GAC")
-        self.var_model = tk.StringVar(value="M8")
-        self.var_year = tk.StringVar(value="2023")
+        self.var_brand = tk.StringVar(value="")
+        self.var_model = tk.StringVar(value="")
+        self.var_year = tk.StringVar(value="")
         self.var_age = tk.StringVar(value="1")
-        self.var_mileage = tk.StringVar(value="92088")
-        self.var_category = tk.StringVar(value="Легковые автомобили азиатские (кроме Японии)")
+        self.var_mileage = tk.StringVar(value="")
+        self.var_category = tk.StringVar(value="Легковые автомобили отечественные")
         self.var_vin = tk.StringVar(value="")
         self.var_plate = tk.StringVar(value="")
         self.var_date = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
-        self.var_bargaining = tk.StringVar(value="5%")
         self.var_moral_wear = tk.StringVar(value="0")
         self.var_repair_cost = tk.StringVar(value="0")
         self.var_calc_mileage_from_analogs = tk.BooleanVar(value=False)
@@ -342,9 +355,6 @@ class ValuationWindow:
         self.res_market_value = tk.StringVar(value="—")
         self.res_variation = tk.StringVar(value="—")
         self.res_target_wear = tk.StringVar(value="—")
-        self.res_status = tk.StringVar(
-            value="Нажмите 'Рассчитать' — аналоги будут подобраны из базы автоматически."
-        )
         self.var_localization_hint = tk.StringVar(value="")
 
         self.var_brand.trace_add("write", self._on_brand_or_vin_change)
@@ -370,30 +380,23 @@ class ValuationWindow:
 
         ttk.Button(
             toolbar,
-            text="📂 Выбрать ТС из базы",
+            text="← Назад",
+            command=self._go_back,
+            width=12,
+        ).pack(side="left", padx=(0, 8))
+
+        ttk.Button(
+            toolbar,
+            text="📂 Загрузить ТС из БД",
             command=self._open_db_selector,
             width=22,
         ).pack(side="left", padx=4)
 
         ttk.Button(
             toolbar,
-            text="⭐ Эталон: GAC M8",
-            command=self._load_benchmark_gac,
-            width=20,
-        ).pack(side="left", padx=4)
-
-        ttk.Button(
-            toolbar,
-            text="⭐ Эталон: Sollers Atlant",
-            command=self._load_benchmark_sollers,
-            width=24,
-        ).pack(side="left", padx=4)
-
-        ttk.Button(
-            toolbar,
-            text="🔄 Очистить",
+            text="🔄 Сбросить форму",
             command=self._clear_all,
-            width=14,
+            width=18,
         ).pack(side="left", padx=4)
 
         # PanedWindow: Left (Target + Actions) / Right (Analogs + Full 8-step Table)
@@ -443,17 +446,17 @@ class ValuationWindow:
         ] or categories
 
         fields = [
-            ("Марка:", self.var_brand, None),
-            ("Модель:", self.var_model, None),
+            ("Марка ТС:", self.var_brand, None),
+            ("Модель ТС:", self.var_model, None),
             ("Год выпуска:", self.var_year, None),
-            ("Фактический возраст Tф (лет):", self.var_age, None),
-            ("Фактический пробег Lф (км):", self.var_mileage, None),
-            ("Категория интенсивности (Минюст):", self.var_category, ru_categories),
+            ("Возраст T_ф (лет):", self.var_age, None),
+            ("Пробег L_ф (км):", self.var_mileage, None),
+            ("Категория ТС (Минюст):", self.var_category, ru_categories),
             ("Дата оценки (ГГГГ-ММ-ДД):", self.var_date, None),
-            ("VIN номер:", self.var_vin, None),
+            ("VIN-номер:", self.var_vin, None),
             ("Гос. рег. знак:", self.var_plate, None),
-            ("Моральный износ Им (%):", self.var_moral_wear, None),
-            ("Ремонт дефектов Сэд (руб.):", self.var_repair_cost, None),
+            ("Моральный износ И_м (%):", self.var_moral_wear, None),
+            ("Устранение дефектов С_эд (руб.):", self.var_repair_cost, None),
         ]
 
         for row, (lbl, var, opts) in enumerate(fields):
@@ -524,7 +527,7 @@ class ValuationWindow:
 
         ttk.Button(
             btn_bar,
-            text="🔍 Подобрать из БД",
+            text="🔍 Подобрать аналоги",
             command=self._manual_pick_analogs,
             width=20,
         ).pack(side="left", padx=3)
@@ -534,11 +537,11 @@ class ValuationWindow:
         ttk.Button(
             btn_bar, text="✏️ Изменить", command=self._edit_selected_analog, width=12
         ).pack(side="left", padx=3)
-        ttk.Button(btn_bar, text="❌ Удалить", command=self._delete_selected_analog, width=11).pack(
+        ttk.Button(btn_bar, text="🗑 Удалить", command=self._delete_selected_analog, width=11).pack(
             side="left", padx=3
         )
         ttk.Button(
-            btn_bar, text="📁 Сменить БД...", command=self._select_db_file, width=14
+            btn_bar, text="📁 База аналогов...", command=self._select_db_file, width=17
         ).pack(side="right", padx=3)
 
         table_frame = ttk.Frame(parent)
@@ -547,11 +550,11 @@ class ValuationWindow:
         columns = ("name", "price", "age", "mileage", "offer_date", "wear", "discount", "deflator", "city")
         self.analogs_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=6)
         self.analogs_tree.heading("name", text="Описание")
-        self.analogs_tree.heading("price", text="Цена оферты (₽)")
-        self.analogs_tree.heading("age", text="Tф (лет)")
+        self.analogs_tree.heading("price", text="Цена предложения (₽)")
+        self.analogs_tree.heading("age", text="Возраст (лет)")
         self.analogs_tree.heading("mileage", text="Пробег (км)")
-        self.analogs_tree.heading("offer_date", text="Дата объявл.")
-        self.analogs_tree.heading("wear", text="Кизн")
+        self.analogs_tree.heading("offer_date", text="Дата объявления")
+        self.analogs_tree.heading("wear", text="К_изн")
         self.analogs_tree.heading("discount", text="Торг")
         self.analogs_tree.heading("deflator", text="К_прив")
         self.analogs_tree.heading("city", text="Город")
@@ -835,9 +838,8 @@ class ValuationWindow:
         else:
             msg += (
                 "Что можно сделать:\n"
-                "1. Нажмите '📁 Сменить БД...', чтобы выбрать другой файл базы данных.\n"
-                "2. Нажмите '⭐ Эталон' для загрузки эталонных данных судебной практики.\n"
-                "3. Добавьте аналоги вручную кнопкой '➕ Добавить'."
+                "1. Нажмите '📁 База аналогов...', чтобы выбрать другой файл базы данных.\n"
+                "2. Добавьте аналоги вручную кнопкой '➕ Добавить'."
             )
             messagebox.showwarning("Недостаточно аналогов", msg)
 
@@ -947,16 +949,16 @@ class ValuationWindow:
         var = report.variation_analysis
         homo_str = "Однородна (v ≤ 30%)" if var.is_homogeneous else "НЕОДНОРОДНА (v > 30%)"
         self.res_variation.set(
-            f"v = {var.variation_coefficient * 100:.2f}% (C_ср = {int(var.mean_price):,}, σ = {int(var.std_dev):,}) — {homo_str}".replace(
+            f"v = {var.variation_coefficient * 100:.2f}% (С₀ = {round(var.mean_price):,}, σ = {round(var.std_dev):,}) — {homo_str}".replace(
                 ",", " "
             )
         )
 
         self.res_target_wear.set(
-            f"Иф = {report.target_wear_pct:.2f}% (Ω = {report.target_omega:.5f})"
+            f"И_ф = {report.target_wear_pct:.2f}% (Ω = {report.target_omega:.5f})"
         )
 
-        # Кизн и К_прив по каждому аналогу: обновляем колонки в таблице аналогов
+        # К_изн и К_прив по каждому аналогу: обновляем колонки в таблице аналогов
         self._analog_wear = [a.k_wear for a in report.analog_results]
         for i, res in enumerate(report.analog_results):
             iid = str(i)
@@ -976,11 +978,11 @@ class ValuationWindow:
         for item in self.coeff_tree.get_children():
             self.coeff_tree.delete(item)
 
-        key_symbols = {"Ω", "Иф", "Сср"}
+        key_symbols = {"Ω", "И_ф", "С_ср"}
         for i, (symbol, name, formula, value) in enumerate(
             _build_target_coefficient_rows(report)
         ):
-            if symbol == "Ств":
+            if symbol == "С_тв":
                 tag = "total"
             elif symbol in key_symbols:
                 tag = "key"
@@ -990,7 +992,7 @@ class ValuationWindow:
 
     def _show_text_report(self) -> None:
         if not self.last_report:
-            messagebox.showinfo("Отчет", "Сначала выполните расчет кнопкой 'Рассчитать'.")
+            messagebox.showinfo("Отчет", "Сначала выполните расчет.")
             return
 
         rep = self.last_report
@@ -1009,8 +1011,8 @@ class ValuationWindow:
             f"Дата фиксации оценки: {rep.valuation_date or 'на дату расчета'}",
             "-" * 78,
             "1. ПРОВЕРКА ВЫБОРКИ НА ОДНОРОДНОСТЬ (Этап 2):",
-            f"   Средняя цена выборки C_ср = {round(rep.variation_analysis.mean_price):,} руб.",
-            f"   Выборочное стандартное отклонение s = {round(rep.variation_analysis.std_dev):,} руб.",
+            f"   Средняя цена выборки С₀ = {round(rep.variation_analysis.mean_price):,} руб.",
+            f"   Выборочное стандартное отклонение σ = {round(rep.variation_analysis.std_dev):,} руб.",
             f"   Коэффициент вариации v = {rep.variation_analysis.variation_coefficient:.4f} ({rep.variation_analysis.variation_coefficient*100:.2f}%)",
             f"   Критерий: v <= 0.30 -> {'Совокупность ОДНОРОДНА, выборка валидна' if rep.variation_analysis.is_homogeneous else 'Выборка неоднородна'}",
             "-" * 78,
@@ -1018,9 +1020,9 @@ class ValuationWindow:
         ]
 
         for symbol, name, formula, value in _build_target_coefficient_rows(rep):
-            if symbol == "Ств":
+            if symbol == "С_тв":
                 continue
-            line = f"   {symbol:<6} {name}"
+            line = f"   {symbol:<10} {name}"
             if formula:
                 line += f": {formula}"
             if value:
@@ -1069,11 +1071,18 @@ class ValuationWindow:
             return
 
         def on_select(record_id: int) -> None:
+            self._restore_self()
             data = self.controller.get_record_data(record_id)
             if data:
                 self._fill_from_dict(data)
 
-        DbRecordsWindow(self.window, records, on_select)
+        self.window.withdraw()
+        DbRecordsWindow(
+            self.window,
+            records,
+            on_select,
+            on_back=self._restore_self,
+        )
 
     def _reset_target_state(self) -> None:
         """Полный сброс объекта исследования перед загрузкой новой записи.
@@ -1146,118 +1155,5 @@ class ValuationWindow:
             type_ts = str(data.get("type_ts", "") or "")
             self.var_category.set(detect_vehicle_category(brand, vin=vin, type_ts=type_ts))
 
-    def _load_benchmark_gac(self) -> None:
-        """Load benchmark GAC M8 parameters from case 4440/25e."""
-        self.var_brand.set("GAC")
-        self.var_model.set("M8")
-        self.var_year.set("2023")
-        self.var_age.set("1")
-        self.var_mileage.set("92088")
-        self.var_category.set("Легковые автомобили азиатские (кроме Японии)")
-        self.var_vin.set("LMGMU1G81P1168719")
-        self.var_plate.set("С 555 ВР 777")
-        self.var_date.set("2024-09-02")
-        self.var_moral_wear.set("0")
-        self.var_repair_cost.set("0")
-        self.var_calc_mileage_from_analogs.set(False)
-        self.var_include_start_month.set(False)
-
-        self.analogs_list = [
-            {
-                "name": "Аналог № 1 (Казань)",
-                "price": 4350000.0,
-                "age_years": 2.0,
-                "mileage_km": 14000.0,
-                "discount": 0.05,
-                "deflator": 0.9325,
-                "city": "Казань",
-            },
-            {
-                "name": "Аналог № 2 (Омск)",
-                "price": 4390000.0,
-                "age_years": 2.0,
-                "mileage_km": 22000.0,
-                "discount": 0.05,
-                "deflator": 0.9254,
-                "city": "Омск",
-            },
-            {
-                "name": "Аналог № 3 (Краснодар)",
-                "price": 4790000.0,
-                "age_years": 2.0,
-                "mileage_km": 17800.0,
-                "discount": 0.05,
-                "deflator": 0.9254,
-                "city": "Краснодар",
-            },
-        ]
-        self._refresh_analogs_table()
-        self.calculate_valuation()
-
-    def _load_benchmark_sollers(self) -> None:
-        """Load benchmark Sollers Atlant parameters from case 4440/25e."""
-        self.var_brand.set("Sollers")
-        self.var_model.set("Atlant")
-        self.var_year.set("2023")
-        self.var_age.set("1")
-        self.var_mileage.set("25618")
-        self.var_category.set("Легковые автомобили отечественные")
-        self.var_vin.set("ЕВЕ66S209P0005012")
-        self.var_plate.set("Т 592 АХ 550")
-        self.var_date.set("2024-08-29")
-        self.var_moral_wear.set("0")
-        self.var_repair_cost.set("0")
-        self.var_calc_mileage_from_analogs.set(False)
-        self.var_include_start_month.set(False)
-
-        self.analogs_list = [
-            {
-                "name": "Аналог № 1 (Москва)",
-                "price": 1908000.0,
-                "age_years": 2.0,
-                "mileage_km": 62271.0,
-                "discount": 0.06,
-                "deflator": 0.932080,
-                "city": "Москва",
-            },
-            {
-                "name": "Аналог № 2 (Раменское)",
-                "price": 2050099.0,
-                "age_years": 2.0,
-                "mileage_km": 39000.0,
-                "discount": 0.06,
-                "deflator": 0.924686,
-                "city": "Раменское",
-            },
-            {
-                "name": "Аналог № 3 (Новосибирск)",
-                "price": 2200000.0,
-                "age_years": 2.0,
-                "mileage_km": 20000.0,
-                "discount": 0.06,
-                "deflator": 0.924686,
-                "city": "Новосибирск",
-            },
-        ]
-        self._refresh_analogs_table()
-        self.calculate_valuation()
-
     def _clear_all(self) -> None:
-        self.var_brand.set("")
-        self.var_model.set("")
-        self.var_year.set("")
-        self.var_age.set("1")
-        self.var_mileage.set("")
-        self.var_vin.set("")
-        self.var_plate.set("")
-        self.var_moral_wear.set("0")
-        self.var_repair_cost.set("0")
-        self.var_calc_mileage_from_analogs.set(False)
-        self.var_include_start_month.set(False)
-        self.analogs_list.clear()
-        self._refresh_analogs_table()
-        for item in self.coeff_tree.get_children():
-            self.coeff_tree.delete(item)
-        self.res_market_value.set("—")
-        self.res_variation.set("—")
-        self.res_target_wear.set("—")
+        self._reset_target_state()
