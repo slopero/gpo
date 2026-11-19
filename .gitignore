@@ -2,10 +2,6 @@
 build/
 dist/
 
-# kiril: генератор отчётов + тяжёлые данные (PDF, база, готовые отчёты).
-# Папка нужна локально для сборки exe, но в git её не храним.
-kiril/
-
 # Large database
 db/cars.db
 cars.db
