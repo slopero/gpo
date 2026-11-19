@@ -156,10 +156,6 @@ class AnalogEditDialog:
         self.dialog.transient(parent)
         self.dialog.grab_set()
 
-        from views.clipboard_fix import install_paste_fix
-
-        install_paste_fix(self.dialog)
-
         raw_deflator = analog_data.get("deflator") if analog_data else None
         raw_discount = analog_data.get("discount") if analog_data else None
         raw_offer_date = analog_data.get("offer_date") if analog_data else None
@@ -186,6 +182,7 @@ class AnalogEditDialog:
         }
 
         self._build_ui()
+        install_paste_fix(self.dialog)
         self._center_window()
 
     def _center_window(self) -> None:

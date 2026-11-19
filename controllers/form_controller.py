@@ -1,17 +1,23 @@
 class FormController:
-    REQUIRED_FIELDS = {
-        "mark": "Марка",
-        "model": "Модель",
-        "type_ts": "Тип ТС",
-        "year_ts": "Год выпуска ТС",
-        "region": "Регион сделки",
-        "date_deal": "Дата сделки",
-        "power": "Мощность двигателя",
-        "volume": "Объем двигателя",
-        "type_engine": "Тип двигателя",
-        "type_kpp": "Тип КПП",
-        "type_body": "Тип кузова",
-    }
+    """Управление карточкой ТС.
+
+    Все поля карточки необязательны: данные о ТС приходят неполными
+    (нет VIN, пробега, мощности), поэтому сохранение не блокируется.
+    """
+
+    FIELD_KEYS = (
+        "mark",
+        "model",
+        "type_ts",
+        "year_ts",
+        "region",
+        "date_deal",
+        "power",
+        "volume",
+        "type_engine",
+        "type_kpp",
+        "type_body",
+    )
 
     def __init__(self, params_model):
         self.params_model = params_model
@@ -19,12 +25,6 @@ class FormController:
 
     def save_params(self, data):
         payload_check = self._build_payload_check(data)
-        missing_fields = [
-            label for key, label in self.REQUIRED_FIELDS.items() if not payload_check.get(key)
-        ]
-
-        if missing_fields:
-            return False, "Не заполнены обязательные поля: " + ", ".join(missing_fields)
 
         try:
             payload = self._build_payload(data, payload_check)
@@ -51,7 +51,7 @@ class FormController:
         return self.selected_record_id
 
     def _build_payload_check(self, data):
-        return {key: self._get_clean_value(data, key) for key in self.REQUIRED_FIELDS}
+        return {key: self._get_clean_value(data, key) for key in self.FIELD_KEYS}
 
     def _build_payload(self, data, payload_check):
         return {
